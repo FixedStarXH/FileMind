@@ -96,10 +96,10 @@ function fileIcon(mime: string | null) {
 }
 
 export default function Library({
-  user, settings, csrf, busy, setBusy, onSettings, onLogout,
+  user, settings, csrf, busy, setBusy, onSettings, onTasks, onLogout,
 }: {
   user: User; settings: Settings; csrf: string; busy: boolean; setBusy: (value: boolean) => void;
-  onSettings: () => void; onLogout: () => void;
+  onSettings: () => void; onTasks: () => void; onLogout: () => void;
 }) {
   const [folders, setFolders] = useState<FolderItem[]>([]);
   const [tags, setTags] = useState<TagItem[]>([]);
@@ -328,13 +328,13 @@ export default function Library({
     try {
       await request(`/documents/${document.id}/permanent`, {
         method: "DELETE",
-        headers: { "X-CSRF-Token": csrf },
+        headers: { "X-CSRF-Token": csrf, "Idempotency-Key": crypto.randomUUID() },
         body: JSON.stringify({ confirm_title: confirmTitle }),
       });
       setDialog(null);
       setConfirmTitle("");
       setSelectedId(null);
-      setNotice("文件和不再使用的原始内容已永久删除。");
+      setNotice("永久删除任务已排队，可在任务中心查看进度。");
       await loadDocuments();
     } catch (cause) { setError(messageFor(cause)); }
     finally { setBusy(false); }
@@ -464,6 +464,7 @@ export default function Library({
           <button className={`nav-item ${folderFilter === "inbox" && stateFilter === "active" ? "is-active" : ""}`} onClick={() => { setStateFilter("active"); setFolderFilter("inbox"); setFavoriteFilter(false); setTagFilter(null); }}><Folder size={16} />收件箱</button>
           <button className={`nav-item ${favoriteFilter ? "is-active" : ""}`} onClick={() => { setStateFilter("active"); setFolderFilter(null); setFavoriteFilter(true); setTagFilter(null); }}><Heart size={16} />收藏</button>
           <button className={`nav-item ${stateFilter === "trashed" ? "is-active" : ""}`} onClick={goToTrash}><Trash2 size={16} />回收站</button>
+          <button className="nav-item" onClick={onTasks}><Clock3 size={16} />任务中心</button>
         </nav>
         <div className="side-section-heading"><span>文件夹</span><button onClick={() => openDialog({ kind: "folder" })} aria-label="新建文件夹"><Plus size={16} /></button></div>
         <div className="folder-tree">{renderFolderTree(null)}</div>

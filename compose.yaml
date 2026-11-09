@@ -10,12 +10,90 @@ services:
       REDIS_URL: redis://redis:6379/0
       STORAGE_ROOT: /data/files
       MODEL_CACHE_DIR: /data/models
+      ENABLE_INGESTION_WORKER: ${ENABLE_INGESTION_WORKER:-false}
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
       - filemind_files:/data/files
       - filemind_models:/data/models:ro
     depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  migrate:
+    build: .
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://filemind:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/filemind
+    command: ["/app/.venv/bin/alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  dispatcher:
+    build: .
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://filemind:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/filemind
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ROOT: /data/files
+      MODEL_CACHE_DIR: /data/models
+      ENABLE_INGESTION_WORKER: ${ENABLE_INGESTION_WORKER:-false}
+    command: ["/app/.venv/bin/python", "-m", "filemind.dispatcher"]
+    volumes:
+      - filemind_files:/data/files
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  worker-maintenance:
+    build: .
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://filemind:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/filemind
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ROOT: /data/files
+      MODEL_CACHE_DIR: /data/models
+    command:
+      - /app/.venv/bin/celery
+      - -A
+      - filemind.celery_app:celery_app
+      - worker
+      - --queues=maintenance
+      - --concurrency=1
+      - --loglevel=INFO
+    volumes:
+      - filemind_files:/data/files
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:

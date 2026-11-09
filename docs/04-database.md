@@ -1,6 +1,6 @@
 # 04 数据库逻辑设计
 
-PostgreSQL 17，时区 UTC。ID 使用 UUID；时间 timestamptz；业务字节数 bigint；所有用户数据带 owner_id。M2 已迁移 `folders`、`tags`、`blobs`、`documents`、`document_versions`、`document_tags` 和 `idempotency_keys`；M1 已迁移 `users` 与 `sessions`。其余表是后续模块的设计依据。
+PostgreSQL 17，时区 UTC。ID 使用 UUID；时间 timestamptz；业务字节数 bigint；所有用户数据带 owner_id。M3 已迁移 `tasks` 和 `outbox`；M2 已迁移 `folders`、`tags`、`blobs`、`documents`、`document_versions`、`document_tags` 和 `idempotency_keys`；M1 已迁移 `users` 与 `sessions`。其余表是后续模块的设计依据。
 
 ## 1. 表结构
 
@@ -18,8 +18,8 @@ PostgreSQL 17，时区 UTC。ID 使用 UUID；时间 timestamptz；业务字节�
 | document_tags | owner_id、document_id、tag_id；联合主键(document_id,tag_id) |
 | chunks | owner_id、version_id、generation、ordinal、text、locator JSONB、token_count、embedding? vector(512)、embedding_model?、search_vector tsvector；UNIQUE(version_id,generation,ordinal) |
 | extracted_blocks | owner_id、version_id、generation、ordinal、kind、text、locator JSONB、ocr_confidence?；保存预览与定位信息 |
-| tasks | owner_id、kind、resource_id、status、stage、progress?、attempt、lease_until?、fencing_token、heartbeat_at?、error_code?、cancel_requested、retry_of? |
-| outbox | event_type、aggregate_id、dispatch_seq、payload JSONB（只含 ID）、published_at?、next_attempt_at、attempt；UNIQUE(event_type,aggregate_id,dispatch_seq) |
+| tasks | owner_id、kind、resource_id、version_id?、status、stage、progress_completed/total?、attempt、lease_until?、fencing_token、heartbeat_at?、error_code?、cancel_requested、retry_of?、dispatch_seq、last_enqueued_at? |
+| outbox | event_type、aggregate_id(task_id)、dispatch_seq、payload JSONB（只含 task_id）、published_at?、next_attempt_at、attempt；UNIQUE(event_type,aggregate_id,dispatch_seq) |
 | conversations | owner_id、title、scope JSONB、revision |
 | messages | owner_id、conversation_id、role、content、run_id?、redacted_at?；服务端分配 role |
 | agent_runs | owner_id、conversation_id?、mode、instruction、scope JSONB、status、task_id?、graph_thread_id 唯一、token_usage JSONB、budget JSONB、model、prompt_version、started_at?、finished_at? |

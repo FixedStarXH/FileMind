@@ -1,7 +1,5 @@
-"""Synchronous private document storage and lifecycle APIs (M2)."""
+"""Private document storage and lifecycle APIs (M2–M3)."""
 
-import logging
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
@@ -17,10 +15,9 @@ from fastapi import (
     Request,
     Response,
     UploadFile,
-    status,
 )
 from fastapi.responses import FileResponse, JSONResponse
-from sqlalchemy import delete, exists, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from filemind.auth import Auth, WriteAuth
@@ -35,12 +32,12 @@ from filemind.http_contracts import (
     save_idempotency,
 )
 from filemind.library_schemas import PermanentDelete
-from filemind.models import Blob, Document, DocumentVersion, IdempotencyKey, User
+from filemind.models import BackgroundTask, Blob, Document, DocumentVersion, User
 from filemind.routes_library import document_payload, owned_document, owned_folder
 from filemind.storage import StagedUpload, blob_path, publish_blob, stage_upload
+from filemind.task_contracts import enqueue_task, task_payload
 
 router = APIRouter(prefix="/api/v1", tags=["documents"])
-logger = logging.getLogger(__name__)
 
 
 def version_payload(version: DocumentVersion, blob: Blob) -> dict[str, object]:
@@ -73,16 +70,6 @@ async def _existing_blob(db: AsyncSession, owner_id: UUID, digest: str) -> Blob 
         select(Blob).where(Blob.owner_id == owner_id, Blob.sha256 == digest).with_for_update()
     )
     return blob
-
-
-def _response(
-    data: dict[str, object], request_id: str, code: int, headers: dict[str, str] | None = None
-) -> JSONResponse:
-    return JSONResponse(
-        status_code=code,
-        content={"data": data, "request_id": request_id},
-        headers=headers,
-    )
 
 
 @router.post("/documents")
@@ -190,7 +177,7 @@ async def upload_document(
             blob_id=blob.id if blob.id else uuid4(),
             version_no=1,
             original_name=staged.original_name,
-            parse_state="not_started",
+            parse_state="queued",
         )
         if blob.id is None:
             await db.flush()
@@ -200,15 +187,17 @@ async def upload_document(
         await db.refresh(document)
         await db.refresh(version)
         await db.refresh(blob)
+        task = enqueue_task(db, owner_id, "parse", document.id, version_id=version.id)
         data = {
             "duplicate": False,
             "document": await document_payload(db, document),
             "version": version_payload(version, blob),
+            "task": task_payload(task),
         }
         body = {"data": data, "request_id": request.state.request_id}
-        save_idempotency(db, owner_id, "POST:/documents", idem, digest, 201, body, document.id)
+        save_idempotency(db, owner_id, "POST:/documents", idem, digest, 202, body, document.id)
         await db.commit()
-        return JSONResponse(status_code=201, content=body)
+        return JSONResponse(status_code=202, content=body)
     except HTTPException:
         await db.rollback()
         if staged is not None:
@@ -297,7 +286,7 @@ async def upload_version(
             blob_id=blob.id,
             version_no=(last_version or 0) + 1,
             original_name=staged.original_name,
-            parse_state="not_started",
+            parse_state="queued",
         )
         db.add(version)
         document.latest_version_id = version.id
@@ -306,15 +295,17 @@ async def upload_version(
         await db.flush()
         await db.refresh(version)
         await db.refresh(blob)
+        task = enqueue_task(db, auth[0].id, "parse", document.id, version_id=version.id)
         data = {
             "document": await document_payload(db, document),
             "version": version_payload(version, blob),
+            "task": task_payload(task),
         }
         body = {"data": data, "request_id": request.state.request_id}
-        save_idempotency(db, auth[0].id, idem_route, idem, digest, 201, body, document.id)
+        save_idempotency(db, auth[0].id, idem_route, idem, digest, 202, body, document.id)
         await db.commit()
         return JSONResponse(
-            status_code=201,
+            status_code=202,
             content=body,
             headers={"ETag": f'"{document.metadata_revision}"'},
         )
@@ -375,87 +366,87 @@ async def download_version(
     )
 
 
-@router.delete("/documents/{document_id}/permanent", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/documents/{document_id}/permanent", status_code=202)
 async def permanently_delete_document(
+    request: Request,
     document_id: UUID,
     body: PermanentDelete,
     auth: WriteAuth,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> Response:
     owner_id = auth[0].id
-    user = await _locked_user(db, owner_id)
+    idem = idempotency_key(request.headers.get("Idempotency-Key"))
+    digest = request_digest(str(document_id), body.confirm_title)
+    await _locked_user(db, owner_id)
+    route = f"DELETE:/documents/{document_id}/permanent"
+    replay = await replay_idempotent(db, owner_id, route, idem, digest)
+    if replay is not None:
+        response_body = copy_replay_body(replay, request.state.request_id)
+        await db.commit()
+        return JSONResponse(status_code=replay.response_status, content=response_body)
     document = await db.scalar(
         select(Document)
         .where(Document.id == document_id, Document.owner_id == owner_id)
         .with_for_update()
     )
-    if document is None or document.state != "trashed":
+    if document is None or document.state not in {"trashed", "purging"}:
         raise HTTPException(404, "RESOURCE_NOT_FOUND")
     if document.title != body.confirm_title:
         raise HTTPException(400, "CONFIRMATION_MISMATCH")
-
-    versions = list(
+    if document.state == "trashed":
+        document.state = "purging"
+        document.metadata_revision += 1
+        document.updated_at = datetime.now(UTC)
+    active_parse_tasks = list(
         (
             await db.scalars(
-                select(DocumentVersion).where(DocumentVersion.document_id == document.id)
+                select(BackgroundTask)
+                .where(
+                    BackgroundTask.owner_id == owner_id,
+                    BackgroundTask.kind == "parse",
+                    BackgroundTask.resource_id == document.id,
+                    BackgroundTask.status.in_(("queued", "running")),
+                )
+                .with_for_update()
             )
         ).all()
     )
-    blob_ids = {version.blob_id for version in versions}
-    staged_deletes: list[tuple[str, str]] = []
-    blobs_to_remove: list[Blob] = []
-    try:
-        for blob_id in blob_ids:
-            blob = await db.scalar(
-                select(Blob).where(Blob.id == blob_id, Blob.owner_id == owner_id).with_for_update()
-            )
-            if blob is None:
-                continue
-            referenced_elsewhere = await db.scalar(
-                select(
-                    exists().where(
+    for parse_task in active_parse_tasks:
+        parse_task.cancel_requested = True
+        parse_task.updated_at = datetime.now(UTC)
+        if parse_task.status == "queued":
+            parse_task.status = "cancelled"
+            parse_task.stage = "cancelled"
+            if parse_task.version_id:
+                version = await db.scalar(
+                    select(DocumentVersion).where(
+                        DocumentVersion.id == parse_task.version_id,
                         DocumentVersion.owner_id == owner_id,
-                        DocumentVersion.blob_id == blob.id,
-                        DocumentVersion.document_id != document.id,
                     )
                 )
+                if version is not None:
+                    version.parse_state = "cancelled"
+        else:
+            parse_task.status = "cancel_requested"
+    task = None
+    if document.state == "purging":
+        task = await db.scalar(
+            select(BackgroundTask)
+            .where(
+                BackgroundTask.owner_id == owner_id,
+                BackgroundTask.kind == "document_purge",
+                BackgroundTask.resource_id == document.id,
+                BackgroundTask.status.in_(("queued", "running", "cancel_requested")),
             )
-            if referenced_elsewhere:
-                continue
-            path = blob_path(get_settings().storage_root, owner_id, blob.storage_key)
-            if path.exists():
-                staging_dir = path.parents[1] / ".staging"
-                staging_dir.mkdir(parents=True, exist_ok=True)
-                staged_file = staging_dir / f"purge-{uuid4().hex}.part"
-                os.replace(path, staged_file)
-                staged_deletes.append((str(staged_file), str(path)))
-            blobs_to_remove.append(blob)
-
-        await db.execute(
-            delete(IdempotencyKey).where(
-                IdempotencyKey.owner_id == owner_id,
-                (IdempotencyKey.resource_id == document.id)
-                | IdempotencyKey.response_body["data"]["documents"].contains(
-                    [{"id": str(document.id)}]
-                ),
-            )
+            .order_by(BackgroundTask.created_at.desc())
+            .limit(1)
         )
-        await db.delete(document)
-        await db.flush()
-        for blob in blobs_to_remove:
-            user.used_bytes = max(0, user.used_bytes - blob.size_bytes)
-            await db.delete(blob)
-        await db.commit()
-    except Exception:
-        await db.rollback()
-        for staged_file_name, original_file_name in staged_deletes:
-            if os.path.exists(staged_file_name):
-                os.replace(staged_file_name, original_file_name)
-        raise
-
-    for staged_file_name, _original_file_name in staged_deletes:
-        try:
-            os.unlink(staged_file_name)
-        except OSError:
-            logger.warning("A permanently deleted blob remains in staging for later cleanup")
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    if task is None:
+        task = enqueue_task(db, owner_id, "document_purge", document.id)
+    response_body = {
+        "data": {"task": task_payload(task)},
+        "request_id": request.state.request_id,
+    }
+    save_idempotency(db, owner_id, route, idem, digest, 202, response_body, document.id)
+    await db.commit()
+    return JSONResponse(status_code=202, content=response_body)

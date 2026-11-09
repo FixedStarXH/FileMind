@@ -28,12 +28,12 @@ flowchart LR
 
 1. 校验账户与容量 → 流式写临时文件、限制大小并计算 SHA-256。M2 锁定用户额度行并在元数据事务中记账；M3 异步任务再使用额度预留。
 2. 检查魔数、MIME、容器结构；将 blob 原子改名到随机存储键；事务创建 document/version。M2 同步写入且标记 `not_started`；M3 起再在同一事务创建 task/outbox。事务失败会回滚元数据、恢复/移除文件；孤儿文件由清理器回收。
-3. dispatcher 发布 task_id 到 Celery，数据库 outbox 记录投递；发布和标记不是原子操作，允许重复消息。
+3. 上传事务同时创建 task/outbox；dispatcher 发布 task_id 到 Celery，数据库 outbox 记录投递；发布和标记不是原子操作，允许重复消息。M3 parse task 暂停在 `waiting_parser`，M4 启用 ingestion Worker 后再发布。
 4. worker CAS 领取任务租约 → 提取页面/块 → 必要时 OCR → 分段 → 生成本地向量与关键词索引。
 5. 在新 generation 中写入片段，完成后事务切换 version 的 active_generation 与 index_mode；首次上传或显式新版本上传同时切换 document 的 current_version。对已有版本重建索引时不改变 current_version。向量模型暂不可用时可激活完整的关键词索引并标记 keyword_only；提取或OCR失败则保留旧 generation，不展示半套索引。
 6. 保存任务终态和事件；API 从数据库提供进度，浏览器以 SSE 跟进。
 
-M2 上传的 HTTP 201 表示原始文件与资料元数据已同步落库，解析状态为 `not_started`。M3 起上传完成的 HTTP 202 只表示已接收，不代表解析完成。前端“可检索”只在索引激活后显示。
+M2 上传的 HTTP 201 表示原始文件与资料元数据已同步落库，解析状态为 `not_started`。M3 起上传返回202并原子创建 parse task/outbox；M3 的任务停在 `waiting_parser`，直到 M4 启用解析 Worker。202 只表示已接收，不代表解析完成。前端“可检索”只在索引激活后显示。
 
 ## 3. 状态机
 
@@ -51,6 +51,7 @@ M2 上传的 HTTP 201 表示原始文件与资料元数据已同步落库，解�
 
 - 数据库为任务真相源；Redis 丢失时可从未完成 outbox 和过期租约重新投递。
 - 任务租约默认 120 秒，每 30 秒续期；写入携带单调递增 fencing_token，旧 worker 无权提交结果。
+- M3 Celery Redis 队列仅携带 task_id；正文、文件名、Key 和用户输入不进入 broker。DB outbox 与 task 同事务写入，worker late-ack，重复投递以状态 CAS 和 fencing token 去重。
 - 每个阶段以 `(version_id, pipeline_version, stage, generation)` 判重；最终激活操作在事务里完成。
 - 模型调用重试可能产生额外费用；记录 provider request ID 和 attempt，不能声称第三方调用恰好一次。
 - 可恢复异常最多重试 3 次，指数退避加 jitter；损坏文件、参数校验错误不自动重试。

@@ -241,3 +241,64 @@ class IdempotencyKey(Base):
         DateTime(timezone=True), nullable=False, index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class BackgroundTask(Base):
+    __tablename__ = "tasks"
+    __table_args__ = (
+        ForeignKeyConstraint(["owner_id"], ["users.id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(["retry_of"], ["tasks.id"], ondelete="SET NULL", deferrable=True),
+        UniqueConstraint("retry_of"),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'cancel_requested', "
+            "'succeeded', 'failed', 'cancelled')"
+        ),
+        CheckConstraint("attempt >= 0 AND fencing_token >= 0 AND dispatch_seq > 0"),
+        CheckConstraint("progress_completed IS NULL OR progress_completed >= 0"),
+        CheckConstraint("progress_total IS NULL OR progress_total >= 0"),
+        Index("ix_tasks_owner_created", "owner_id", "created_at", "id"),
+        Index("ix_tasks_status_lease", "status", "lease_until"),
+        Index("ix_tasks_resource", "owner_id", "resource_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    owner_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    resource_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    version_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    status: Mapped[str] = mapped_column(String(24), default="queued", nullable=False)
+    stage: Mapped[str] = mapped_column(String(64), nullable=False)
+    progress_completed: Mapped[int | None] = mapped_column(Integer)
+    progress_total: Mapped[int | None] = mapped_column(Integer)
+    attempt: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fencing_token: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    retry_of: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    dispatch_seq: Mapped[int] = mapped_column(BigInteger, default=1, nullable=False)
+    last_enqueued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class OutboxEvent(Base):
+    __tablename__ = "outbox"
+    __table_args__ = (
+        UniqueConstraint("event_type", "aggregate_id", "dispatch_seq"),
+        CheckConstraint("dispatch_seq > 0 AND attempt >= 0"),
+        Index("ix_outbox_ready", "next_attempt_at", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    aggregate_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    dispatch_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    attempt: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

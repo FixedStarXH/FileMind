@@ -4,7 +4,7 @@
 
 Windows 开发机使用 Docker Desktop/WSL2 的 Linux 容器；浏览器用 Edge。正式部署为单台 Linux 主机 + Docker Compose，前端与 API 同源。M0 已提供 API、PostgreSQL、Redis 的基础 Compose；Nginx、worker、dispatcher、scheduler 将在后续模块加入。
 
-服务：nginx、api、worker-ingest、worker-agent、worker-export、dispatcher、scheduler、postgres、redis。worker 使用同一 backend 镜像与不同启动参数；OCR/embedding 权重放只读模型缓存，业务文件放共享持久卷。API 与 worker 以非 root 用户运行。
+服务：nginx、api、worker-ingest、worker-agent、worker-export、worker-maintenance、dispatcher、postgres、redis。M3 增加迁移、dispatcher 和 maintenance worker；parse task 留在数据库直到 M4 的 ingestion worker 上线。worker 使用同一 backend 镜像与不同启动参数；OCR/embedding 权重放只读模型缓存，业务文件放共享持久卷。API 与 worker 以非 root 用户运行。
 
 默认 OCR 并发1、Agent并发2、导出并发1；API数据库池5+overflow5，worker每进程独立小池。参考资源4核8GiB，推荐开发机为容器预留至少8GiB，首次安装和大PDF需实测内存，不能把参考配置当保证。
 

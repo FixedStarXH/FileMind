@@ -1,6 +1,6 @@
 # 05 HTTP 接口契约
 
-设计版本 v1；前缀 `/api/v1`。M1 已实现账户、会话和设置端点；M2 已实现文件夹、标签、文件和版本生命周期接口。其余接口是后续模块契约。FastAPI OpenAPI 会随实现逐模块校验。
+设计版本 v1；前缀 `/api/v1`。M1 已实现账户、会话和设置端点；M2 已实现文件夹、标签、文件和版本生命周期接口；M3 已实现持久任务与 Outbox。其余接口是后续模块契约。FastAPI OpenAPI 会随实现逐模块校验。
 
 ## 1. 通用约定
 
@@ -32,15 +32,15 @@
 | POST /tags | `{name,color?}` | 201 tag |
 | PATCH /tags/{id} | `{name?,color?}` | 200 tag |
 | DELETE /tags/{id} | 移除关联，不删文件 | 204 |
-| POST /documents | multipart `file,folder_id?`，一次一个文件；Idempotency-Key | M2 201 `{document,version}`；重复内容200 `{duplicate:true,documents:[...]}`；M3 起接收响应为202 task |
+| POST /documents | multipart `file,folder_id?`，一次一个文件；Idempotency-Key | M3 202 `{document,version,task}`；重复内容200 `{duplicate:true,documents:[...]}` |
 | GET /documents | folder_id?,tag_ids?,favorite?,q?,state=active/trashed,sort?,cursor?,limit? | 200 列表 |
 | GET /documents/{id} | — | 200 文件详情和各版本处理状态 |
 | PATCH /documents/{id} | `{title?,folder_id?,tag_ids?,favorite?}` + If-Match | 200 document |
 | DELETE /documents/{id} | If-Match，移入回收站 | 204 |
 | POST /documents/{id}/restore | If-Match | 200 document |
-| DELETE /documents/{id}/permanent | `{confirm_title}`，仅回收站文件 | M2 同步204；M3 起202 `{task_id}` |
+| DELETE /documents/{id}/permanent | `{confirm_title}`，仅回收站文件；Idempotency-Key | M3 202 `{task}`；文件立即转为 purging 并禁止访问 |
 | GET /documents/{id}/versions | — | 200 列表 |
-| POST /documents/{id}/versions | multipart `file` + If-Match + Idempotency-Key | M2 201 `{document,version}`；M3 起202 `{version,task}` |
+| POST /documents/{id}/versions | multipart `file` + If-Match + Idempotency-Key | M3 202 `{document,version,task}` |
 | GET /versions/{id}/preview | `{kind?,page?}` 为 query | 200 `{kind,blocks,page_count}`；PDF/图片二进制由 content 接口读取 |
 | GET /versions/{id}/content | inline PDF/图片；鉴权，支持 Range | 200/206 bytes |
 | GET /versions/{id}/download | 原文件附件下载 | 200/206 bytes |
@@ -69,7 +69,7 @@
 
 账户仅由管理员 CLI 创建，不开放公开注册。初始化命令为 `filemind create-user <email>`；密码通过交互提示输入两次，不作为命令行参数保存。写接口要求会话 Cookie、CSRF header 和精确匹配 `APP_ORIGIN` 的 Origin。M1 登录限流按邮箱与客户端 IP 分别计数，15分钟最多10次/邮箱、30次/IP；Redis 不可用时拒绝登录。
 
-**M2/M3 阶段接口边界**：M2 尚无持久任务执行器，因此 `POST /documents` 与 `POST /documents/{id}/versions` 同步写入原始文件和元数据，成功返回201，`parse_state=not_started`，不会声称已排队解析；M2 `DELETE /documents/{id}/permanent` 同步清除元数据/文件并返回204。M3 接入持久任务队列后，这三类操作切换为本契约表中的202任务响应；上传只表示已接收，解析结果仍由任务状态决定。
+**M2/M3 阶段接口边界**：M2 曾同步接收文件并同步永久删除。M3 起上传和新增版本返回202，原始 blob 与元数据在同一数据库事务中提交，并创建 parse task/outbox；解析 task 状态为 queued、stage=`waiting_parser`，M3 dispatcher 暂不将它投递给 Celery，M4 提供解析 Worker 后再启用。M3 永久删除返回202，文件立即标记 purging 并禁止访问，当前解析任务会收到取消请求；后台 Worker 等待解析租约结束后清除 blob 与元数据。202 只表示请求已持久接收，不表示解析或删除已完成。
 
 ## 3. 核心模型
 
@@ -77,11 +77,11 @@
 
 `GET /documents` 默认 state=active；省略 folder_id 表示“全部文件”，传 `folder_id=inbox` 表示 folder_id=null 的收件箱；真实文件夹使用 UUID。q 对标题与原始文件名做大小写不敏感匹配，不搜索正文；正文使用 `/search`。sort 首版为 `updated_desc`（默认）、`name_asc`、`size_desc`，游标绑定排序和筛选。`GET /documents/{id}` 的最新版本与当前可检索版本可能不同；首次解析失败时 current_version_id=null。
 
-**Task**：`id,kind,status,stage,progress?,attempt,error?,retry_of?,created_at,updated_at`。progress 是真实已完成项/总项，不可计算则 null。
+**Task**：`id,kind,status,stage,progress?,attempt,error_code?,cancel_requested,retry_of?,created_at,updated_at`。progress 是真实已完成项/总项，不可计算则 null。M3 kinds 为 parse、document_purge；parse task 的 stage=`waiting_parser` 表示等待 M4 Worker。
 
 **Folder**：`id,name,parent_id?,revision,created_at,updated_at`。**Tag**：`id,name,color`。
 
-任务重试补充规则：`/tasks/{id}/retry` 只用于失败/取消的解析、清理和导出任务，并重新校验资源与配额；Agent任务返回409 `RESTART_AGENT_REQUIRED`，前端通过创建新run重新生成方案并重新审批。自动恢复尚未终结的Agent run使用原checkpoint及已记录审批，只能继续同一plan，已应用动作不得重复执行。审批执行失败后不能将原批准用于新方案。
+任务重试补充规则：`/tasks/{id}/retry` 只用于失败/取消且原资源仍可用的解析任务，或仍处于 purging 的永久删除任务；返回同一失败任务的重复 retry 会重放已创建的子任务。不可取消的永久删除任务返回409。Agent任务返回409 `RESTART_AGENT_REQUIRED`，前端通过创建新run重新生成方案并重新审批。自动恢复尚未终结的Agent run使用原checkpoint及已记录审批，只能继续同一plan，已应用动作不得重复执行。审批执行失败后不能将原批准用于新方案。
 
 回收站文件允许所有者通过版本预览/下载接口访问，文件详情响应携带trashed状态；搜索和Agent工具仍排除。包含回收站文件的历史回答只显示“来源已移入回收站”并隐藏原文片段，恢复后可再次定位；相关导出包立即失效。purging/purged状态禁止内容访问。加密文件若在接收检查时识别，返回422；异步解析才发现则task.error=ENCRYPTED_DOCUMENT，文件仍可下载。
 

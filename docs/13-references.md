@@ -1,6 +1,6 @@
 # 13 官方参考与核对记录
 
-核对日期：2026-11-08。以下用于理解组件能力；具体版本兼容性仍由M0探针验证，不以网页描述替代运行测试。
+核对日期：2026-11-09。以下用于理解组件能力；具体版本兼容性仍由模块验证，不以网页描述替代运行测试。
 
 | 来源 | 本方案使用的依据 |
 |---|---|
@@ -14,6 +14,7 @@
 | [FastAPI Docker 部署](https://fastapi.tiangolo.com/deployment/docker/) | 构建应用容器与部署 |
 | [SQLAlchemy asyncio](https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html) | 异步会话与并发边界；任务独立session |
 | [Celery Tasks](https://docs.celeryq.dev/en/stable/userguide/tasks.html) | 重投、ack、幂等、超时的重要性 |
+| [Celery Redis transport](https://docs.celeryq.dev/en/stable/getting-started/backends-and-brokers/redis.html) | Redis visibility timeout 与 worker 退出时未确认任务的重投行为；FileMind 同时用数据库租约与 Outbox 作为恢复依据 |
 | [Celery FAQ](https://docs.celeryq.dev/en/stable/faq.html) | Celery 不正式支持 Windows，worker 用 Linux 容器运行 |
 | [BGE 中文小模型](https://huggingface.co/BAAI/bge-small-zh-v1.5) | 模型用途、维数与推理方式，实施时固定revision |
 | [RapidOCR](https://github.com/RapidAI/RapidOCR) | 本地OCR，支持ONNX Runtime等推理后端 |

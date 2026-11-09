@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ArrowRight, Check, Eye, EyeOff, FileText, HardDrive, KeyRound, LogOut, ShieldCheck } from "lucide-react";
 import Library from "./Library";
+import TaskCenter from "./TaskCenter";
 import { request } from "./api";
 
 type User = { id: string; email: string };
@@ -40,7 +41,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [view, setView] = useState<"library" | "settings">("library");
+  const [view, setView] = useState<"library" | "tasks" | "settings">("library");
 
   async function loadAccount() {
     const me = await request<{ user: User; csrf_token: string }>("/auth/me");
@@ -153,9 +154,14 @@ export default function App() {
         busy={busy}
         setBusy={setBusy}
         onSettings={() => setView("settings")}
+        onTasks={() => setView("tasks")}
         onLogout={() => void logout()}
       />
     );
+  }
+
+  if (user && settings && view === "tasks") {
+    return <TaskCenter csrf={csrf} onLibrary={() => setView("library")} onSettings={() => setView("settings")} onLogout={() => void logout()} />;
   }
 
   if (user && settings) {

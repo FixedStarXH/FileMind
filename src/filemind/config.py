@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     ocr_concurrency: int = 1
     agent_concurrency: int = 2
     export_concurrency: int = 1
+    task_lease_seconds: int = 120
+    enable_ingestion_worker: bool = False
 
     run_max_llm_calls: int = 8
     run_max_tool_calls: int = 12
@@ -67,6 +69,7 @@ class Settings(BaseSettings):
         "ocr_concurrency",
         "agent_concurrency",
         "export_concurrency",
+        "task_lease_seconds",
         "run_max_llm_calls",
         "run_max_tool_calls",
         "run_max_input_tokens",
