@@ -1,6 +1,6 @@
 # 04 数据库逻辑设计
 
-PostgreSQL 17，时区 UTC。ID 使用 UUID；时间 timestamptz；业务字节数 bigint；所有用户数据带 owner_id。M1 已迁移 `users` 与 `sessions`；其他表仍是后续迁移的设计依据。
+PostgreSQL 17，时区 UTC。ID 使用 UUID；时间 timestamptz；业务字节数 bigint；所有用户数据带 owner_id。M2 已迁移 `folders`、`tags`、`blobs`、`documents`、`document_versions`、`document_tags` 和 `idempotency_keys`；M1 已迁移 `users` 与 `sessions`。其余表是后续模块的设计依据。
 
 ## 1. 表结构
 
@@ -53,7 +53,7 @@ erDiagram
 ```
 
 - 对所有被跨表引用的用户资源建立 UNIQUE(owner_id,id)，使用包含 owner_id 的复合 FK，防止 A 用户文件引用 B 用户文件夹/标签/版本。
-- documents.current_version_id 必须属于该 document；建立 `(id,current_version_id)` 到 versions `(document_id,id)` 的延迟 FK，上传事务先创建文件再创建版本。
+- `documents.current_version_id` 与 `latest_version_id` 必须属于该 document；建立 `(id,version_id)` 到 versions `(document_id,id)` 的延迟 FK。M2 首版上传时两者指向初始版本，新增版本时仅更新 latest；文件内容尚未进入解析流水线。
 - 同用户相同 blob 可复用，但只有显式版本上传才在现有 document 下创建新版本。普通上传若匹配 active 文件的当前版本，则返回已有文档列表；只匹配历史版本或回收站文件时可以新建 document 并复用 blob；不跨账户去重。
 - quota 更新锁定 users 行，约束 `used_bytes>=0`、`reserved_bytes>=0`、二者和≤quota；物理 blob 按用户唯一对象计费，删除最后引用后扣除。
 - metadata_revision 每次修改递增；current_version 激活、进入回收站也递增，令旧整理计划失效。

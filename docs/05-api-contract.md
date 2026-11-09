@@ -1,6 +1,6 @@
 # 05 HTTP 接口契约
 
-设计版本 v1；前缀 `/api/v1`。M1 已实现账户、会话和设置端点；其他接口仍是后续模块契约。FastAPI OpenAPI 会随实现逐模块校验。
+设计版本 v1；前缀 `/api/v1`。M1 已实现账户、会话和设置端点；M2 已实现文件夹、标签、文件和版本生命周期接口。其余接口是后续模块契约。FastAPI OpenAPI 会随实现逐模块校验。
 
 ## 1. 通用约定
 
@@ -32,15 +32,15 @@
 | POST /tags | `{name,color?}` | 201 tag |
 | PATCH /tags/{id} | `{name?,color?}` | 200 tag |
 | DELETE /tags/{id} | 移除关联，不删文件 | 204 |
-| POST /documents | multipart `file,folder_id?`，一次一个文件 | 202 `{document,version,task}`；重复内容200 `{duplicate:true,documents:[...]}` |
+| POST /documents | multipart `file,folder_id?`，一次一个文件；Idempotency-Key | M2 201 `{document,version}`；重复内容200 `{duplicate:true,documents:[...]}`；M3 起接收响应为202 task |
 | GET /documents | folder_id?,tag_ids?,favorite?,q?,state=active/trashed,sort?,cursor?,limit? | 200 列表 |
 | GET /documents/{id} | — | 200 文件详情和各版本处理状态 |
 | PATCH /documents/{id} | `{title?,folder_id?,tag_ids?,favorite?}` + If-Match | 200 document |
 | DELETE /documents/{id} | If-Match，移入回收站 | 204 |
 | POST /documents/{id}/restore | If-Match | 200 document |
-| DELETE /documents/{id}/permanent | `{confirm_title}`，仅回收站文件 | 202 `{task_id}` |
+| DELETE /documents/{id}/permanent | `{confirm_title}`，仅回收站文件 | M2 同步204；M3 起202 `{task_id}` |
 | GET /documents/{id}/versions | — | 200 列表 |
-| POST /documents/{id}/versions | multipart file + If-Match | 202 `{version,task}` |
+| POST /documents/{id}/versions | multipart `file` + If-Match + Idempotency-Key | M2 201 `{document,version}`；M3 起202 `{version,task}` |
 | GET /versions/{id}/preview | `{kind?,page?}` 为 query | 200 `{kind,blocks,page_count}`；PDF/图片二进制由 content 接口读取 |
 | GET /versions/{id}/content | inline PDF/图片；鉴权，支持 Range | 200/206 bytes |
 | GET /versions/{id}/download | 原文件附件下载 | 200/206 bytes |
@@ -68,6 +68,8 @@
 `GET /health/live` 只检测进程；`GET /health/ready` 检测 DB、broker、文件卷可用，不返回密钥。DeepSeek 缺 Key 不影响基础 readiness；capabilities 表明哪些功能可用。
 
 账户仅由管理员 CLI 创建，不开放公开注册。初始化命令为 `filemind create-user <email>`；密码通过交互提示输入两次，不作为命令行参数保存。写接口要求会话 Cookie、CSRF header 和精确匹配 `APP_ORIGIN` 的 Origin。M1 登录限流按邮箱与客户端 IP 分别计数，15分钟最多10次/邮箱、30次/IP；Redis 不可用时拒绝登录。
+
+**M2/M3 阶段接口边界**：M2 尚无持久任务执行器，因此 `POST /documents` 与 `POST /documents/{id}/versions` 同步写入原始文件和元数据，成功返回201，`parse_state=not_started`，不会声称已排队解析；M2 `DELETE /documents/{id}/permanent` 同步清除元数据/文件并返回204。M3 接入持久任务队列后，这三类操作切换为本契约表中的202任务响应；上传只表示已接收，解析结果仍由任务状态决定。
 
 ## 3. 核心模型
 

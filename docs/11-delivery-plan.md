@@ -7,7 +7,7 @@
 | D0 | 完整设计文档 | 无 | 本次文档；`docs: define FileMind v0.1 specification` |
 | M0 | Python 3.12 基础兼容性、工程、锁文件、Compose、CI | D0 | 空库迁移、API容器、基础健康检查；`chore: bootstrap application and runtime` |
 | M1 | 账户、Session/CSRF、配额基础、登录与设置页 | M0 | 登录/CSRF/改密/退出/限流/配额；`feat: add private accounts and quota` |
-| M2 | 上传、blob、文件夹/标签、版本、回收站 | M1 | 无AI可管理文件、删除恢复、重复上传；`feat: implement document lifecycle` |
+| M2 | 同步上传与 blob、文件夹/标签、版本、回收站 | M1 | 无AI可管理文件、删除恢复、重复上传、下载与配额更新；上传标记 not_started；`feat: implement document lifecycle` |
 | M3 | Outbox、Celery租约、任务中心、取消恢复 | M2 | kill worker后恢复、幂等；`feat: add durable background processing` |
 | M4 | 解析、OCR、结构化预览与定位 | M3 | 每种支持类型成功/失败样本；`feat: parse documents with local OCR` |
 | M5 | 中文全文、BGE向量、混合检索 | M4 | 三组检索对照评测；`feat: add hybrid document retrieval` |

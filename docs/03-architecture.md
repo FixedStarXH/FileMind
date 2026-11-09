@@ -26,14 +26,14 @@ flowchart LR
 
 ## 2. 上传到检索的数据流
 
-1. 校验账户与容量 → 预留额度 → 流式写临时文件、限制大小并计算 SHA-256。
-2. 检查魔数、MIME、容器结构；将 blob 原子改名到随机存储键；事务创建 document/version/task/outbox。失败释放预留额度；孤儿文件由清理器回收。
+1. 校验账户与容量 → 流式写临时文件、限制大小并计算 SHA-256。M2 锁定用户额度行并在元数据事务中记账；M3 异步任务再使用额度预留。
+2. 检查魔数、MIME、容器结构；将 blob 原子改名到随机存储键；事务创建 document/version。M2 同步写入且标记 `not_started`；M3 起再在同一事务创建 task/outbox。事务失败会回滚元数据、恢复/移除文件；孤儿文件由清理器回收。
 3. dispatcher 发布 task_id 到 Celery，数据库 outbox 记录投递；发布和标记不是原子操作，允许重复消息。
 4. worker CAS 领取任务租约 → 提取页面/块 → 必要时 OCR → 分段 → 生成本地向量与关键词索引。
 5. 在新 generation 中写入片段，完成后事务切换 version 的 active_generation 与 index_mode；首次上传或显式新版本上传同时切换 document 的 current_version。对已有版本重建索引时不改变 current_version。向量模型暂不可用时可激活完整的关键词索引并标记 keyword_only；提取或OCR失败则保留旧 generation，不展示半套索引。
 6. 保存任务终态和事件；API 从数据库提供进度，浏览器以 SSE 跟进。
 
-上传完成的 HTTP 202 只表示已接收，不代表解析完成。前端“可检索”只在索引激活后显示。
+M2 上传的 HTTP 201 表示原始文件与资料元数据已同步落库，解析状态为 `not_started`。M3 起上传完成的 HTTP 202 只表示已接收，不代表解析完成。前端“可检索”只在索引激活后显示。
 
 ## 3. 状态机
 

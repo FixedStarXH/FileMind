@@ -1,5 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ArrowRight, Check, Eye, EyeOff, FileText, HardDrive, KeyRound, LogOut, ShieldCheck } from "lucide-react";
+import Library from "./Library";
+import { request } from "./api";
 
 type User = { id: string; email: string };
 type AccountSettings = {
@@ -9,20 +11,6 @@ type AccountSettings = {
   reserved_bytes: number;
   capabilities: { deepseek: boolean; keyword_search: boolean; vector_search: boolean };
 };
-type Envelope<T> = { data: T; request_id?: string };
-
-async function request<T>(path: string, init: RequestInit = {}): Promise<Envelope<T>> {
-  const response = await fetch(`/api/v1${path}`, {
-    ...init,
-    credentials: "include",
-    headers: { "Content-Type": "application/json", ...init.headers },
-  });
-  if (response.status === 204) return { data: undefined as T };
-  const body = await response.json();
-  if (!response.ok) throw new Error(body?.error?.code ?? "REQUEST_FAILED");
-  return body as Envelope<T>;
-}
-
 const errorText: Record<string, string> = {
   AUTH_REQUIRED: "登录状态已失效，请重新登录。",
   INVALID_OLD_PASSWORD: "当前密码不正确。",
@@ -52,11 +40,13 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [view, setView] = useState<"library" | "settings">("library");
 
   async function loadAccount() {
     const me = await request<{ user: User; csrf_token: string }>("/auth/me");
     const account = await request<AccountSettings>("/settings");
     setUser(me.data.user);
+    setView("library");
     setCsrf(me.data.csrf_token);
     setSettings(account.data);
   }
@@ -76,6 +66,7 @@ export default function App() {
         body: JSON.stringify({ email, password }),
       });
       setUser(result.data.user);
+      setView("library");
       setCsrf(result.data.csrf_token);
       setPassword("");
       const account = await request<AccountSettings>("/settings");
@@ -153,6 +144,20 @@ export default function App() {
     }
   }
 
+  if (user && settings && view === "library") {
+    return (
+      <Library
+        user={user}
+        settings={settings}
+        csrf={csrf}
+        busy={busy}
+        setBusy={setBusy}
+        onSettings={() => setView("settings")}
+        onLogout={() => void logout()}
+      />
+    );
+  }
+
   if (user && settings) {
     const used = settings.used_bytes + settings.reserved_bytes;
     const percent = settings.quota_bytes ? Math.min(100, (used / settings.quota_bytes) * 100) : 0;
@@ -160,6 +165,7 @@ export default function App() {
       <main className="account-shell">
         <header className="account-topbar">
           <a className="brand" href="#home"><span className="brand-mark"><FileText size={18} /></span>知档</a>
+          <button className="quiet-button" onClick={() => setView("library")}><FileText size={16} /><span>返回资料库</span></button>
           <span className="account-email">{user.email}</span>
           <button className="quiet-button" onClick={() => void logout()} disabled={busy} aria-label="退出登录"><LogOut size={17} /><span>退出</span></button>
         </header>

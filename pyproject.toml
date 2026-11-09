@@ -13,6 +13,7 @@ dependencies = [
     "uvicorn[standard]>=0.38,<1",
     "sqlalchemy[asyncio]>=2.0.45,<2.1",
     "psycopg[binary]>=3.3,<4",
+    "python-multipart>=0.0.33,<0.1",
     "redis>=7.1,<8",
 ]
 

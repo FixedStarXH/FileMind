@@ -14,6 +14,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from filemind.config import get_settings
 from filemind.routes_auth import router as account_router
+from filemind.routes_documents import router as documents_router
+from filemind.routes_library import router as library_router
 
 
 @asynccontextmanager
@@ -37,6 +39,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(account_router)
+app.include_router(library_router)
+app.include_router(documents_router)
 
 
 @app.middleware("http")
