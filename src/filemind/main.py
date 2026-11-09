@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from filemind.config import get_settings
+from filemind.routes_agent import router as agent_router
 from filemind.routes_auth import router as account_router
 from filemind.routes_documents import router as documents_router
 from filemind.routes_library import router as library_router
@@ -46,6 +47,7 @@ app.include_router(library_router)
 app.include_router(documents_router)
 app.include_router(preview_router)
 app.include_router(search_router)
+app.include_router(agent_router)
 app.include_router(tasks_router)
 
 

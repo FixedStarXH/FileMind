@@ -12,9 +12,11 @@ from sqlalchemy import delete, exists, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from filemind.agent_events import append_event
 from filemind.config import get_settings
 from filemind.indexing import INDEX_PIPELINE_VERSION, make_chunks
 from filemind.models import (
+    AgentRun,
     BackgroundTask,
     Blob,
     Chunk,
@@ -146,6 +148,10 @@ def _is_current_lease(session: Session, claimed: ClaimedTask, now: datetime) -> 
 def _purge_document(engine: Engine, claimed: ClaimedTask) -> None:
     if claimed.resource_id is None:
         raise ValueError("task resource is required")
+    from filemind.agent_runtime import cancel_active_runs_for_source, redact_runs_for_source
+
+    if cancel_active_runs_for_source(engine, claimed.owner_id, claimed.resource_id):
+        raise RuntimeError("waiting for cited agent runs to stop before purging source")
     storage_root = get_settings().storage_root
     staged_paths: list[tuple[Path, Path]] = []
     try:
@@ -187,6 +193,8 @@ def _purge_document(engine: Engine, claimed: ClaimedTask) -> None:
             )
             if active_parse:
                 raise RuntimeError("document parse worker has not released its lease")
+
+            redact_runs_for_source(session, engine, claimed.owner_id, document.id, now)
 
             user = session.scalar(select(User).where(User.id == claimed.owner_id).with_for_update())
             if user is None:
@@ -271,7 +279,7 @@ def _finish_generic(engine: Engine, claimed: ClaimedTask) -> None:
             select(BackgroundTask)
             .where(
                 BackgroundTask.id == claimed.id,
-                BackgroundTask.status == "running",
+                BackgroundTask.status.in_(("running", "cancel_requested")),
                 BackgroundTask.fencing_token == claimed.fencing_token,
                 BackgroundTask.lease_until > now,
             )
@@ -497,12 +505,36 @@ def _fail_or_retry(engine: Engine, claimed: ClaimedTask) -> None:
             select(BackgroundTask)
             .where(
                 BackgroundTask.id == claimed.id,
-                BackgroundTask.status == "running",
+                BackgroundTask.status.in_(("running", "cancel_requested")),
                 BackgroundTask.fencing_token == claimed.fencing_token,
             )
             .with_for_update()
         )
         if task is None:
+            return
+        if task.cancel_requested or task.status == "cancel_requested":
+            task.status = "cancelled"
+            task.stage = "cancelled"
+            task.error_code = None
+            task.lease_until = None
+            task.heartbeat_at = None
+            task.updated_at = now
+            if task.kind == "agent_run" and task.resource_id is not None:
+                run = session.scalar(
+                    select(AgentRun)
+                    .where(AgentRun.id == task.resource_id, AgentRun.owner_id == task.owner_id)
+                    .with_for_update()
+                )
+                if run is not None and run.status not in ("succeeded", "failed", "cancelled"):
+                    run.status = "cancelled"
+                    run.finished_at = now
+                    append_event(
+                        session,
+                        run,
+                        "run.cancelled",
+                        "terminal",
+                        {"status": "cancelled"},
+                    )
             return
         task.lease_until = None
         task.heartbeat_at = None
@@ -511,6 +543,23 @@ def _fail_or_retry(engine: Engine, claimed: ClaimedTask) -> None:
         if task.attempt >= 3:
             task.status = "failed"
             task.stage = "failed"
+            if task.kind == "agent_run" and task.resource_id is not None:
+                run = session.scalar(
+                    select(AgentRun)
+                    .where(AgentRun.id == task.resource_id, AgentRun.owner_id == task.owner_id)
+                    .with_for_update()
+                )
+                if run is not None and run.status not in ("succeeded", "failed", "cancelled"):
+                    run.status = "failed"
+                    run.error_code = task.error_code
+                    run.finished_at = now
+                    append_event(
+                        session,
+                        run,
+                        "run.failed",
+                        "terminal",
+                        {"status": "failed", "error": task.error_code},
+                    )
             if claimed.version_id:
                 version = session.scalar(
                     select(DocumentVersion)
@@ -571,6 +620,10 @@ def execute_task(task_id: str) -> None:
                 _purge_document(engine, claimed)
             elif claimed.kind == "parse":
                 _parse_document(engine, claimed)
+            elif claimed.kind == "agent_run":
+                from filemind.agent_runtime import run_agent_task
+
+                run_agent_task(engine, claimed)
             else:
                 raise ValueError("task handler is not available")
         except ParseFailure as exc:

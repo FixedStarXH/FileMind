@@ -46,7 +46,7 @@ M4 锁文件解析组件版本：pypdf 7.0.0、pypdfium2 5.15.1、python-docx 1.
 1. M0：Python 3.12、锁文件、API 容器、PostgreSQL/Redis、初始迁移和健康检查在目标容器组合运行。
 2. M4：CPU 上验证 PDF 原生文本、扫描 OCR、DOCX/PPTX、TXT/MD、PNG/JPEG；记录包版本和部署资源限制。OCR 权重随 RapidOCR Python 包；核对包许可证，不另行下载模型文件。
 3. M5：BGE 实际输出 512 维；按 jieba token span 分段并保留源 locator，查询指令仅用于查询侧；中英样本评测关键词、语义和混合检索。中文分词样本含“操作系统”“操作 系统”“计网/计算机网络”，分词与 chunk 规则版本化。
-4. M6：DeepSeek 在显式关闭思考模式下完成普通回复、工具往返、流式输出、usage；无 Key 时只跑标明 mock 的合约验证，真实测试待配置后执行。同阶段验证 PostgreSQL checkpointer、暂停/恢复与 Celery 重投。
+4. M6：问答模式使用 LangGraph + PostgreSQL checkpointer，DeepSeek Chat API 由 httpx 适配；答案结构、引用编号与来源状态在服务端校验。当前 Key 未配置，真实模型回复、usage 与质量评测待配置后执行；无 Key 时只跑标明 mock 的合约验证。跨中断恢复和 Celery 重投仍需后续专项验证。
 5. 每阶段确认相应依赖可在目标容器组合安装并记录许可证；发现阻断性兼容问题再调整，不无故升级技术栈。
 
 官方依据见 [13 官方参考](13-references.md)。

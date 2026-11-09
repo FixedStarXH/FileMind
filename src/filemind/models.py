@@ -363,3 +363,160 @@ class OutboxEvent(Base):
     )
     attempt: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Conversation(Base):
+    __tablename__ = "conversations"
+    __table_args__ = (
+        ForeignKeyConstraint(["owner_id"], ["users.id"], ondelete="CASCADE"),
+        UniqueConstraint("owner_id", "id"),
+        Index("ix_conversations_owner_updated", "owner_id", "updated_at", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    owner_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    scope: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AgentRun(Base):
+    __tablename__ = "agent_runs"
+    __table_args__ = (
+        ForeignKeyConstraint(["owner_id"], ["users.id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(
+            ["owner_id", "conversation_id"],
+            ["conversations.owner_id", "conversations.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(["task_id"], ["tasks.id"], ondelete="SET NULL"),
+        UniqueConstraint("owner_id", "id"),
+        UniqueConstraint("graph_thread_id"),
+        CheckConstraint("mode IN ('qa')"),
+        CheckConstraint("status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')"),
+        CheckConstraint("next_event_seq > 0"),
+        Index("ix_agent_runs_owner_created", "owner_id", "created_at", "id"),
+        Index("ix_agent_runs_owner_status", "owner_id", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    owner_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    conversation_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    mode: Mapped[str] = mapped_column(String(24), nullable=False)
+    instruction: Mapped[str] = mapped_column(Text, nullable=False)
+    scope: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="queued", nullable=False)
+    task_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    graph_thread_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    token_usage: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+    budget: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    model: Mapped[str] = mapped_column(String(80), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    retrieval_version: Mapped[int | None] = mapped_column(BigInteger)
+    answer: Mapped[str | None] = mapped_column(Text)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    next_event_seq: Mapped[int] = mapped_column(BigInteger, default=1, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Message(Base):
+    __tablename__ = "messages"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["owner_id", "conversation_id"],
+            ["conversations.owner_id", "conversations.id"],
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("owner_id", "id"),
+        CheckConstraint("role IN ('user', 'assistant')"),
+        Index("ix_messages_conversation_created", "conversation_id", "created_at", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    owner_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    conversation_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    run_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    redacted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class RunStep(Base):
+    __tablename__ = "run_steps"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["owner_id", "run_id"], ["agent_runs.owner_id", "agent_runs.id"], ondelete="CASCADE"
+        ),
+        CheckConstraint("seq > 0 AND duration_ms >= 0"),
+        Index("ix_run_steps_owner_run", "owner_id", "run_id", "seq"),
+    )
+
+    run_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    seq: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    owner_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    safe_input: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    safe_output: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Citation(Base):
+    __tablename__ = "citations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["owner_id", "run_id"], ["agent_runs.owner_id", "agent_runs.id"], ondelete="CASCADE"
+        ),
+        ForeignKeyConstraint(
+            ["owner_id", "document_id"], ["documents.owner_id", "documents.id"], ondelete="CASCADE"
+        ),
+        ForeignKeyConstraint(
+            ["owner_id", "version_id"],
+            ["document_versions.owner_id", "document_versions.id"],
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("run_id", "citation_key"),
+        CheckConstraint("status IN ('available', 'trashed', 'unavailable')"),
+        Index("ix_citations_owner_run", "owner_id", "run_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    owner_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    run_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    citation_key: Mapped[str] = mapped_column(String(8), nullable=False)
+    document_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    version_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    chunk_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    locator: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    quote: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="available", nullable=False)
+    used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class StreamEvent(Base):
+    __tablename__ = "stream_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["owner_id", "run_id"], ["agent_runs.owner_id", "agent_runs.id"], ondelete="CASCADE"
+        ),
+        UniqueConstraint("run_id", "seq"),
+        UniqueConstraint("run_id", "event_key"),
+        Index("ix_stream_events_run_seq", "run_id", "seq"),
+        Index("ix_stream_events_created", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    owner_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    run_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    event_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

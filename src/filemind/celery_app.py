@@ -11,12 +11,14 @@ if not settings.redis_url:
 
 maintenance_exchange = Exchange("maintenance", type="direct", durable=True)  # type: ignore[no-untyped-call]
 ingestion_exchange = Exchange("ingestion", type="direct", durable=True)  # type: ignore[no-untyped-call]
+agent_exchange = Exchange("agent", type="direct", durable=True)  # type: ignore[no-untyped-call]
 maintenance_queue = Queue(
     "maintenance", exchange=maintenance_exchange, routing_key="maintenance", durable=True
 )  # type: ignore[no-untyped-call]
 ingestion_queue = Queue(
     "ingestion", exchange=ingestion_exchange, routing_key="ingestion", durable=True
 )  # type: ignore[no-untyped-call]
+agent_queue = Queue("agent", exchange=agent_exchange, routing_key="agent", durable=True)  # type: ignore[no-untyped-call]
 
 celery_app = Celery("filemind", broker=settings.redis_url)
 celery_app.conf.update(
@@ -26,6 +28,7 @@ celery_app.conf.update(
     task_queues=(
         maintenance_queue,
         ingestion_queue,
+        agent_queue,
     ),
     task_serializer="json",
     accept_content=["json"],

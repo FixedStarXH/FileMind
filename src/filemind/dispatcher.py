@@ -26,7 +26,11 @@ def _engine_url() -> str:
 
 
 def _queue_for(task: BackgroundTask) -> str:
-    return "ingestion" if task.kind == "parse" else "maintenance"
+    if task.kind == "parse":
+        return "ingestion"
+    if task.kind == "agent_run":
+        return "agent"
+    return "maintenance"
 
 
 def _new_outbox(task: BackgroundTask, due: datetime | None = None) -> OutboxEvent:

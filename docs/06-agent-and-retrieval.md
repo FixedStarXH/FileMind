@@ -53,7 +53,7 @@ flowchart TD
 
 ## 5. 状态与审批
 
-GraphState：run_id、mode、scope_snapshot、messages、evidence_ids、tool_steps、candidate_plan_id、budget_usage、error；不把文件全文无限堆入状态。每次 run 使用独立 graph_thread_id；会话历史由服务端读取最近6轮并限制在8,000 token 内，不跨用户记忆。范围可显式包括收件箱。问答可检索全库，但每次只将实际命中的授权片段绑定版本并送入上下文；整理和资料包最多展开100个文件。
+M6 的 GraphState 保存 run_id、owner_id、thread_id、当前指令、scope 快照、最多8个证据片段及受校验的答案；不把文件全文或会话历史写入 checkpoint。每个 run 使用独立 graph_thread_id。图节点从数据库读取同一会话最近12条未删除消息（最多20,000字符，约6轮）用于追问理解；旧回答只作为对话语境，本轮事实仍须由本轮检索证据支持。资料被永久删除时会清理引用它的历史答案、事件及 checkpoint。范围可显式包括收件箱。问答可检索全库，但每次只将实际命中的授权片段绑定版本并送入上下文；整理和资料包最多展开100个文件。
 
 待确认页面展示每项变更前后值与原因。审批包含 plan_hash 与 selected_action_ids；hash 使用规范化 JSON，包含操作、文件 ID、版本/revision。24小时内有效；文件变动、被删除、目标目录不存在、当前用户关闭 AI 均要重新评估，不能复用旧批准执行新方案。
 

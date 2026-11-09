@@ -5,6 +5,7 @@
 | 来源 | 本方案使用的依据 |
 |---|---|
 | [DeepSeek API 起步](https://api-docs.deepseek.com/) | Chat API接入、模型名配置化；当前文档示例包含deepseek-flash |
+| [DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/) | `/chat/completions` 请求、JSON 输出、usage 与 thinking 参数；M6 适配层仍需真实 Key 联调 |
 | [DeepSeek Tool Calls](https://api-docs.deepseek.com/guides/tool_calls/) | 模型提出工具调用，应用侧校验与执行；本方案不依赖beta strict |
 | [DeepSeek Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode/) | 当前思考模式默认开启，首版需显式关闭；若以后开启，工具调用必须回传 reasoning_content |
 | [LangGraph Persistence](https://docs.langchain.com/oss/python/langgraph/persistence) | 持久化checkpoint与跨中断恢复 |

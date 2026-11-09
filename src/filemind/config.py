@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_api_key: SecretStr | None = None
     deepseek_model: str = "deepseek-flash"
+    deepseek_connect_timeout_seconds: int = 10
+    deepseek_read_timeout_seconds: int = 90
     ai_enabled: bool = True
 
     embedding_model: str = "BAAI/bge-small-zh-v1.5"
@@ -41,6 +43,7 @@ class Settings(BaseSettings):
     user_quota_bytes: int = 2_147_483_648
     ocr_concurrency: int = 1
     agent_concurrency: int = 2
+    agent_daily_runs: int = 100
     export_concurrency: int = 1
     task_lease_seconds: int = 120
     enable_ingestion_worker: bool = False
@@ -83,7 +86,10 @@ class Settings(BaseSettings):
         "user_quota_bytes",
         "ocr_concurrency",
         "agent_concurrency",
+        "agent_daily_runs",
         "export_concurrency",
+        "deepseek_connect_timeout_seconds",
+        "deepseek_read_timeout_seconds",
         "task_lease_seconds",
         "run_max_llm_calls",
         "run_max_tool_calls",

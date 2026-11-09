@@ -10,9 +10,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from filemind.agent_events import append_event_async
 from filemind.auth import Auth, WriteAuth
 from filemind.database import get_db
-from filemind.models import BackgroundTask, Document, DocumentVersion
+from filemind.models import AgentRun, BackgroundTask, Document, DocumentVersion
 from filemind.task_contracts import enqueue_task, task_payload
 
 router = APIRouter(prefix="/api/v1", tags=["tasks"])
@@ -116,11 +117,28 @@ async def cancel_task(
         raise HTTPException(404, "RESOURCE_NOT_FOUND")
     if task.kind == "document_purge":
         raise HTTPException(409, "TASK_NOT_CANCELLABLE")
+    agent_run = None
+    if task.kind == "agent_run" and task.resource_id is not None:
+        agent_run = await db.scalar(
+            select(AgentRun)
+            .where(AgentRun.id == task.resource_id, AgentRun.owner_id == auth[0].id)
+            .with_for_update()
+        )
     if task.status == "queued":
         task.status = "cancelled"
         task.stage = "cancelled"
         task.cancel_requested = True
         task.updated_at = datetime.now(UTC)
+        if agent_run is not None:
+            agent_run.status = "cancelled"
+            agent_run.finished_at = datetime.now(UTC)
+            await append_event_async(
+                db,
+                agent_run,
+                "run.cancelled",
+                "terminal",
+                {"status": "cancelled"},
+            )
         if task.version_id:
             version = await db.scalar(
                 select(DocumentVersion).where(
@@ -135,6 +153,14 @@ async def cancel_task(
         task.status = "cancel_requested"
         task.cancel_requested = True
         task.updated_at = datetime.now(UTC)
+        if agent_run is not None:
+            await append_event_async(
+                db,
+                agent_run,
+                "run.step",
+                "cancel-requested",
+                {"stage": "cancelling", "message": "正在停止本次问答"},
+            )
     else:
         raise HTTPException(409, "TASK_CONFLICT")
     await db.commit()

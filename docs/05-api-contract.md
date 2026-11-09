@@ -48,9 +48,9 @@
 | POST /search | SearchRequest `{query,mode,scope,limit}`；mode=`keyword|semantic|hybrid` | 200 `{hits,degraded,retrieval_version}` |
 | POST /conversations | `{title?,scope}` | 201 conversation |
 | GET /conversations | 游标 | 200 列表 |
-| GET /conversations/{id}/messages | 游标 | 200 列表，含引用 |
+| GET /conversations/{id} | — | 200 会话、消息与引用 |
 | DELETE /conversations/{id} | 取消关联活动任务后清理 | 202 `{task_id}` |
-| POST /agent/runs | RunRequest | 202 `{run_id,status,events_url}` |
+| POST /agent/runs | M6: `{mode:"qa",conversation_id,instruction,scope}` | 202 `{run_id,status,events_url}`；Key 未配置503 `AI_NOT_CONFIGURED`；账户未启用AI返回403 |
 | GET /agent/runs/{id} | — | 200 RunDetail |
 | GET /agent/runs/{id}/events | SSE；Last-Event-ID? | 200 text/event-stream |
 | POST /agent/runs/{id}/cancel | `{}` | 202 `{status:"cancel_requested"}` |
@@ -81,7 +81,7 @@
 
 **Folder**：`id,name,parent_id?,revision,created_at,updated_at`。**Tag**：`id,name,color`。
 
-任务重试补充规则：`/tasks/{id}/retry` 只用于失败/取消且原资源仍可用的解析任务，或仍处于 purging 的永久删除任务；返回同一失败任务的重复 retry 会重放已创建的子任务。不可取消的永久删除任务返回409。Agent任务返回409 `RESTART_AGENT_REQUIRED`，前端通过创建新run重新生成方案并重新审批。自动恢复尚未终结的Agent run使用原checkpoint及已记录审批，只能继续同一plan，已应用动作不得重复执行。审批执行失败后不能将原批准用于新方案。
+任务重试补充规则：`/tasks/{id}/retry` 只用于失败/取消且原资源仍可用的解析任务，或仍处于 purging 的永久删除任务；返回同一失败任务的重复 retry 会重放已创建的子任务。不可取消的永久删除任务返回409。Agent任务不经通用 retry 接口重跑；创建新问答须提交新 run。后续有审批模式时，Agent任务返回409 `RESTART_AGENT_REQUIRED`，前端通过创建新run重新生成方案并重新审批。自动恢复尚未终结的Agent run使用原checkpoint及已记录审批，只能继续同一plan，已应用动作不得重复执行。审批执行失败后不能将原批准用于新方案。
 
 回收站文件允许所有者通过版本预览/下载接口访问，文件详情响应携带trashed状态；搜索和Agent工具仍排除。包含回收站文件的历史回答只显示“来源已移入回收站”并隐藏原文片段，恢复后可再次定位；相关导出包立即失效。purging/purged状态禁止内容访问。Office 加密文件若在接收检查时识别，返回422 `ENCRYPTED_DOCUMENT`；加密 PDF 在异步解析时失败为 `ENCRYPTED_PDF`，文件仍可下载。
 

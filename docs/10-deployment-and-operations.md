@@ -2,7 +2,7 @@
 
 ## 1. 运行拓扑
 
-Windows 开发机使用 Docker Desktop/WSL2 的 Linux 容器；浏览器用 Edge。正式部署为单台 Linux 主机 + Docker Compose，前端与 API 同源。M4 Compose 启动独立 ingestion worker；Nginx、Agent/export worker 和 scheduler 在后续模块加入。
+Windows 开发机使用 Docker Desktop/WSL2 的 Linux 容器；浏览器用 Edge。正式部署为单台 Linux 主机 + Docker Compose，前端与 API 同源。Compose 启动独立 ingestion、Agent 与维护 worker；Nginx 和 export worker 在后续模块加入。
 
 服务：nginx、api、worker-ingestion、worker-agent、worker-export、worker-maintenance、dispatcher、postgres、redis、migrate。M5 ingestion worker 单并发、3 GiB 内存限制、业务文件卷只读；专用模型卷只对 ingestion worker 可写，API 只读。RapidOCR 模型随锁定 Python 包安装；首次 BGE 索引会从固定 revision 下载约95 MB ONNX 模型至模型卷，后续离线复用。API 与 worker 以非 root 用户运行。
 
