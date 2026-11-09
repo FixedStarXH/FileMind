@@ -23,6 +23,9 @@ dependencies = [
     "rapidocr>=3.10,<4",
     "onnxruntime>=1.22,<2",
     "pillow>=11,<13",
+    "pgvector>=0.4.2,<1",
+    "fastembed>=0.7.3,<1",
+    "jieba>=0.42.1,<1",
 ]
 
 [dependency-groups]

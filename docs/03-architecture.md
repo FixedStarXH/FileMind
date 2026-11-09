@@ -30,17 +30,17 @@ flowchart LR
 2. 检查魔数、MIME、容器结构；将 blob 原子改名到随机存储键；事务创建 document/version。M2 同步写入且标记 `not_started`；M3 起再在同一事务创建 task/outbox。事务失败会回滚元数据、恢复/移除文件；孤儿文件由清理器回收。
 3. 上传事务同时创建 task/outbox；dispatcher 发布 task_id 到 Celery，数据库 outbox 记录投递；发布和标记不是原子操作，允许重复消息。M3 parse task 暂停在 `waiting_parser`，M4 启用 ingestion Worker 后再发布。
 4. M4 ingestion worker CAS 领取任务租约 → 提取 PDF、Office、文本或图片内容 → 对扫描 PDF/图片运行本地 OCR → 写入带 locator 的 extracted_blocks。任务与版本状态记录提取/OCR 阶段；取消与提交前检查租约及 fencing token。
-5. M5 从 extracted_blocks 读取已解析内容，在新 generation 写入 chunks、关键词与向量索引；完成后事务切换 version 的 active_generation/index_mode，并在可检索时激活 document 的 current_version。对已有版本重建索引时不改变 current_version。向量模型暂不可用时可激活完整关键词索引并标记 keyword_only；索引失败则保留旧 generation，不展示半套索引。
+5. M5 在解析任务的 indexing 阶段从 extracted_blocks 生成有界 chunks、jieba 中文关键词文本和 BGE 向量；固定模型资产缓存于模型卷。写入同一 extraction generation，最终事务激活 version 的 active_generation/index_mode，并且只在该版本仍是 latest_version 时切换 document.current_version。重建版本索引不打断此前已激活的 generation。模型资产暂不可用时可原子激活完整关键词索引并标记 keyword_only，混合检索明确降级；事务失败则保留旧 generation，不展示半套索引。
 6. 保存任务终态和事件；API 从数据库提供进度，浏览器以 SSE 跟进。
 
-M2 上传的 HTTP 201 表示原始文件与资料元数据已同步落库，解析状态为 `not_started`。M3 起上传返回202并原子创建 parse task/outbox；M4 打开 ingestion worker 后投递并保存解析结果。202 只表示已接收，不代表解析完成。M4 `ready` 表示结构化提取完成；仍须等 M5 激活索引后才可检索和切换 `current_version`。
+M2 上传的 HTTP 201 表示原始文件与资料元数据已同步落库，解析状态为 `not_started`。M3 起上传返回202并原子创建 parse task/outbox；M4 打开 ingestion worker 后投递并保存解析结果。202 只表示已接收，不代表解析完成。M5 完成 indexing 后才写入 `ready` 并可激活 `current_version`；解析或索引仍在执行时，旧的 current version 保持可检索。
 
 ## 3. 状态机
 
 | 对象 | 状态及转换 |
 |---|---|
 | 文件 | active → trashed → active 或 purging → purged；回收站到期触发 purging |
-| 版本解析 | queued → extracting → ocr（可跳过）→ ready；运行中可转 failed/cancelled；M5 索引作为后续独立阶段 |
+| 版本处理 | queued → extracting → ocr（可跳过）→ indexing → ready；运行中可转 failed/cancelled；ready 表示当前 generation 已建立可检索索引 |
 | 普通任务 | queued → running → succeeded/failed/cancelled；running 可进入 cancel_requested；重试创建新任务 |
 | Agent run | queued → running → waiting_approval → queued → running → succeeded；可转 failed/cancelled/expired |
 | 审批 | pending → approved/rejected/expired；approved 的执行结果另记 applied/failed |

@@ -45,7 +45,7 @@
 | GET /versions/{id}/content | 仅 PDF/图片 inline；鉴权、单 Range | 200/206 bytes，私有 no-store |
 | GET /versions/{id}/download | 原文件附件下载 | 200/206 bytes |
 | POST /versions/{id}/reprocess | `{}`；不允许同版本并行解析 | 202 `{task}` |
-| POST /search | SearchRequest | 200 `{hits,degraded,retrieval_version}` |
+| POST /search | SearchRequest `{query,mode,scope,limit}`；mode=`keyword|semantic|hybrid` | 200 `{hits,degraded,retrieval_version}` |
 | POST /conversations | `{title?,scope}` | 201 conversation |
 | GET /conversations | 游标 | 200 列表 |
 | GET /conversations/{id}/messages | 游标 | 200 列表，含引用 |
@@ -87,7 +87,7 @@
 
 **Scope**：`{"document_ids":["uuid"],"folder_ids":[],"tag_ids":[],"inbox":false,"all_documents":false}`。各选择器按并集确定范围并去重；inbox=true 选择 folder_id=null 的未归档文件；all_documents=true 时其他选择器和 inbox 必须为空/false。默认禁止隐式全库；搜索和问答可显式选择全库，按授权索引检索，结果证据固定版本；整理和资料包必须指定有限范围并在 run 开始时展开至最多100文件，超出返回422 SCOPE_TOO_LARGE。文件夹包含后代文件夹。
 
-**SearchRequest**：`{query:string(1..2000),mode:"keyword"|"semantic"|"hybrid",scope:Scope,limit:int(1..50)}`。返回 hit：`{document_id,version_id,chunk_id,title,snippet,locator,score}`；score 是排序值，不是置信概率。首版最多50个片段，不提供检索游标。
+**SearchRequest**：`{query:string(1..2000),mode:"keyword"|"semantic"|"hybrid",scope:Scope,limit:int(1..50)}`。返回 hit：`{document_id,version_id,chunk_id,title,snippet,locator,score}`；score 是关键词 rank 或 reciprocal-rank-fusion 排序值，不是置信概率。语义与混合模式使用固定 revision 的本地 BGE；若模型不可用，hybrid 返回关键词结果并置 `degraded=true`，semantic 返回503 `SEARCH_UNAVAILABLE`。只检索 owner 的 active 文档 current_version 与 active_generation；首版最多50条，不提供游标。
 
 搜索 scope 必须显式指定至少一个选择器，或 `all_documents=true`；仅文件名查询请用 `/documents?q=`。问答的 scope 在 run 创建时确定，后续追问可重新选择范围，但每个 run 都保存独立的范围快照。
 
@@ -151,4 +151,4 @@ data: {"run_id":"uuid","seq":18,"text":"根据课件……"}
 | 429 | RATE_LIMITED / RUN_BUDGET_EXCEEDED | 等待 Retry-After 或缩小范围 |
 | 503 | AI_NOT_CONFIGURED / MODEL_UNAVAILABLE / SEARCH_UNAVAILABLE | 显示不可用，不伪造结果 |
 
-M4 解析失败时 `tasks.error_code` 和 `document_versions.error_code` 写入稳定错误码，例如 `CORRUPT_DOCUMENT`、`ENCRYPTED_PDF`、`PAGE_LIMIT_EXCEEDED`、`PDF_PAGE_PIXEL_LIMIT_EXCEEDED`、`IMAGE_PIXEL_LIMIT_EXCEEDED`、`OCR_UNAVAILABLE`、`OCR_FAILED`。M4 不声明 OCR 单页硬超时；任务限制文件大小、PDF 页数及渲染/图片像素，运维可回收异常 worker。M5 的 `EMBEDDING_FAILED` 另行定义。日志保存 request_id，响应不返回堆栈、绝对路径或 Key。
+M4 解析失败时 `tasks.error_code` 和 `document_versions.error_code` 写入稳定错误码，例如 `CORRUPT_DOCUMENT`、`ENCRYPTED_PDF`、`PAGE_LIMIT_EXCEEDED`、`PDF_PAGE_PIXEL_LIMIT_EXCEEDED`、`IMAGE_PIXEL_LIMIT_EXCEEDED`、`OCR_UNAVAILABLE`、`OCR_FAILED`。M4 不声明 OCR 单页硬超时；任务限制文件大小、PDF 页数及渲染/图片像素，运维可回收异常 worker。M5 关键词索引不依赖向量模型；语义模型不可用时返回 `SEARCH_UNAVAILABLE` 或 hybrid `degraded=true`。日志保存 request_id，响应不返回堆栈、绝对路径或 Key。

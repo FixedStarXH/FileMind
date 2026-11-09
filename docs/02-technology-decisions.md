@@ -17,13 +17,13 @@
 | LLM | DeepSeek Chat API，经独立 httpx 适配层 | Key 为空，模型名配置化；工具参数本地校验 |
 | OCR | `rapidocr` 3.10 + ONNX Runtime CPU | 本地识别；锁文件固定依赖，默认模型随 RapidOCR wheel 安装，不在首次用户请求时联网下载 |
 | 文本提取 | pypdf、pypdfium2、python-docx、python-pptx | PDF 文本与渲染分开，避免引入完整 Office 服务 |
-| 向量 | BAAI/bge-small-zh-v1.5 + sentence-transformers | 中文优先、512 维、CPU 可运行；英文质量另外验证 |
+| 向量 | BAAI/bge-small-zh-v1.5 + FastEmbed/ONNX Runtime | 中文优先、512 维、CPU 可运行；模型仓库与 commit 固定；英文质量另外验证 |
 | 关键词 | jieba + PostgreSQL tsvector/GIN | 文档与查询同样分词后使用 simple 配置；支持中文全文召回 |
 | 文件存储 | 本地持久卷 + Storage 接口 | 单机部署简单；未来可替换 S3 兼容存储，首版不引入 MinIO |
 | 部署 | Docker Compose + Nginx；Windows 使用 WSL2/Linux 容器 | worker 运行在 Linux 环境，统一运行依赖 |
 | 质量 | pytest、Ruff、mypy、Vitest、Playwright | 集成验证实际 PostgreSQL/Redis；E2E 包含 Edge |
 
-M4 锁文件解析组件版本：pypdf 7.0.0、pypdfium2 5.15.1、python-docx 1.2.0、python-pptx 1.0.2、rapidocr 3.10.0、onnxruntime 1.31.1；前端 PDF.js 锁定在 `frontend/package-lock.json`。版本号以 `uv.lock` 与 npm 锁文件为准。RapidOCR 官方说明从 3.10 起使用 headless OpenCV，并通过 Python API 返回文本框和置信度；OCR engine 为 ONNX Runtime CPU。OCR 模型随 Python 包分发，无独立模型 revision/下载流程；向量模型仍由 M5 锁定 revision 与许可证。
+M4 锁文件解析组件版本：pypdf 7.0.0、pypdfium2 5.15.1、python-docx 1.2.0、python-pptx 1.0.2、rapidocr 3.10.0、onnxruntime 1.31.1；M5 锁 FastEmbed、jieba、pgvector Python adapter；前端 PDF.js 锁定在 `frontend/package-lock.json`。实际版本以 `uv.lock` 与 npm 锁文件为准。RapidOCR 与 FastEmbed 都运行 ONNX Runtime CPU。BGE 权重使用 `Qdrant/bge-small-zh-v1.5` 的固定 revision `46fbe35fd4374a00fee7de77dfddaeb6dd6a2c59`，下载到独立模型卷，不进入 Git；模型文件许可证为 MIT。
 
 这里的版本是已验证的锁定版本，不宣称长期最新。基础镜像与服务镜像使用具体版本标签；发布前记录实际镜像摘要。前端 Node 采用满足所选 Vite engines 的 Node 22 LTS 补丁版本。禁止生产使用浮动 latest 标签。
 
@@ -45,7 +45,7 @@ M4 锁文件解析组件版本：pypdf 7.0.0、pypdfium2 5.15.1、python-docx 1.
 
 1. M0：Python 3.12、锁文件、API 容器、PostgreSQL/Redis、初始迁移和健康检查在目标容器组合运行。
 2. M4：CPU 上验证 PDF 原生文本、扫描 OCR、DOCX/PPTX、TXT/MD、PNG/JPEG；记录包版本和部署资源限制。OCR 权重随 RapidOCR Python 包；核对包许可证，不另行下载模型文件。
-3. M5：BGE 实际输出 512 维；使用模型 tokenizer 分段，查询指令仅用于查询侧；中英样本检索评测。中文分词样本含“操作系统”“操作 系统”“计网/计算机网络”，词典和查询规则版本化。
+3. M5：BGE 实际输出 512 维；按 jieba token span 分段并保留源 locator，查询指令仅用于查询侧；中英样本评测关键词、语义和混合检索。中文分词样本含“操作系统”“操作 系统”“计网/计算机网络”，分词与 chunk 规则版本化。
 4. M6：DeepSeek 在显式关闭思考模式下完成普通回复、工具往返、流式输出、usage；无 Key 时只跑标明 mock 的合约验证，真实测试待配置后执行。同阶段验证 PostgreSQL checkpointer、暂停/恢复与 Celery 重投。
 5. 每阶段确认相应依赖可在目标容器组合安装并记录许可证；发现阻断性兼容问题再调整，不无故升级技术栈。
 

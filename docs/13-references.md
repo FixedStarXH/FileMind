@@ -10,6 +10,10 @@
 | [LangGraph Persistence](https://docs.langchain.com/oss/python/langgraph/persistence) | 持久化checkpoint与跨中断恢复 |
 | [LangGraph Interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts) | 暂停等待输入并恢复；业务副作用仍须自行幂等 |
 | [pgvector](https://github.com/pgvector/pgvector) | PostgreSQL向量检索，可与全文检索组合 |
+| [FastEmbed](https://qdrant.github.io/fastembed/) | 本地 ONNX 文本向量生成和模型清单 |
+| [Qdrant BGE-small-zh ONNX 模型](https://huggingface.co/Qdrant/bge-small-zh-v1.5/commit/46fbe35fd4374a00fee7de77dfddaeb6dd6a2c59) | MIT 许可；FileMind 固定至该 revision，512 维 |
+| [FastEmbed supported models](https://qdrant.github.io/fastembed/) | BGE-small-zh 模型名、维度及 MIT 元数据 |
+| [jieba](https://github.com/fxsjy/jieba) | 中文分词；查询与文档按同一 cut_for_search 规则生成关键词 |
 | [PostgreSQL 全文控制](https://www.postgresql.org/docs/current/textsearch-controls.html) | tsvector/tsquery、排名、字段权重；中文分词由本方案补充 |
 | [FastAPI Docker 部署](https://fastapi.tiangolo.com/deployment/docker/) | 构建应用容器与部署 |
 | [SQLAlchemy asyncio](https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html) | 异步会话与并发边界；任务独立session |

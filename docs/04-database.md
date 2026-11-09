@@ -16,7 +16,7 @@ PostgreSQL 17，时区 UTC。ID 使用 UUID；时间 timestamptz；业务字节�
 | documents | owner_id、folder_id?、title、favorite、state、current_version_id?、metadata_revision、trashed_at? |
 | document_versions | owner_id、document_id、blob_id、version_no、original_name、parse_state、index_mode?（hybrid/keyword_only）、active_generation?、pipeline_version、page_count?、error_code?；UNIQUE(document_id,version_no) |
 | document_tags | owner_id、document_id、tag_id；联合主键(document_id,tag_id) |
-| chunks | owner_id、version_id、generation、ordinal、text、locator JSONB、token_count、embedding? vector(512)、embedding_model?、search_vector tsvector；UNIQUE(version_id,generation,ordinal) |
+| chunks | owner_id、version_id、generation、ordinal、text、locator JSONB、token_count、jieba search_text、generated tsvector、embedding? vector(512)、embedding_model?；UNIQUE(version_id,generation,ordinal) |
 | extracted_blocks | owner_id、version_id、generation、ordinal、kind、text、locator JSONB、ocr_confidence?；保存预览与定位信息，复合外键保证版本所有者一致 |
 | tasks | owner_id、kind、resource_id、version_id?、status、stage、progress_completed/total?、attempt、lease_until?、fencing_token、heartbeat_at?、error_code?、cancel_requested、retry_of?、dispatch_seq、last_enqueued_at? |
 | outbox | event_type、aggregate_id(task_id)、dispatch_seq、payload JSONB（只含 task_id）、published_at?、next_attempt_at、attempt；UNIQUE(event_type,aggregate_id,dispatch_seq) |
@@ -69,7 +69,7 @@ erDiagram
 
 ## 4. 生命周期与迁移
 
-- 原始 blob 不覆盖；更新产生新版本。M4 提取写入新 extracted_blocks generation，并在事务中更新 active_generation；M5 索引 generation 与提取 generation 对齐，激活后延迟清理旧 generation。
+- 原始 blob 不覆盖；更新产生新版本。M4/M5 在解析任务中写入同一个新 generation 的 extracted_blocks 和 chunks；关键词和向量块随 `active_generation` 同一事务生效，历史 generation 暂留以支持失败回退与版本引用。
 - 引用保存版本与定位快照；片段清理后仍可定位该版本。文件进回收站时，历史回答隐藏对应原文片段和引用摘录，引用标记为 trashed；恢复后重新校验可定位。永久删除时 quote 置空、locator 不再返回、status=unavailable。
 - 删除某文件时，包含其内容的聊天回答、run 工具结果、计划、事件和 checkpoint 一并清理或标为已移除；idempotency_keys.response_body 及错误/重放缓存中若含资料正文也要清理。无法安全拆除内容时删除整段关联会话，并在 UI 告知。
 - 历史版本保留至文件永久删除；首版不提供单版本删除。导出24小时过期，事件7天，审计90天；备份另按运维策略轮换。

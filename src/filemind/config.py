@@ -1,5 +1,6 @@
 """Validated runtime configuration."""
 
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -31,7 +32,7 @@ class Settings(BaseSettings):
     ai_enabled: bool = True
 
     embedding_model: str = "BAAI/bge-small-zh-v1.5"
-    embedding_model_revision: str | None = None
+    embedding_model_revision: str = "46fbe35fd4374a00fee7de77dfddaeb6dd6a2c59"
     embedding_dim: int = 512
     ocr_backend: str = "rapidocr"
 
@@ -60,6 +61,13 @@ class Settings(BaseSettings):
     def validate_embedding_dim(cls, value: int) -> int:
         if value != 512:
             raise ValueError("bge-small-zh-v1.5 requires EMBEDDING_DIM=512")
+        return value
+
+    @field_validator("embedding_model_revision")
+    @classmethod
+    def validate_embedding_revision(cls, value: str) -> str:
+        if re.fullmatch(r"[0-9a-f]{40}", value) is None:
+            raise ValueError("EMBEDDING_MODEL_REVISION must be a full 40-character commit SHA")
         return value
 
     @field_validator("ocr_backend")

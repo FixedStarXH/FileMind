@@ -46,6 +46,7 @@ def version_payload(version: DocumentVersion, blob: Blob) -> dict[str, object]:
         "version_no": version.version_no,
         "original_name": version.original_name,
         "parse_state": version.parse_state,
+        "index_mode": version.index_mode,
         "error_code": version.error_code,
         "size_bytes": blob.size_bytes,
         "mime": blob.mime,

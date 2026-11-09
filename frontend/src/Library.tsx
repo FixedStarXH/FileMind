@@ -18,16 +18,20 @@ type Settings = {
 type FolderItem = { id: string; name: string; parent_id: string | null; revision: number };
 type TagItem = { id: string; name: string; color: string; document_count: number };
 type VersionItem = {
-  id: string; version_no: number; original_name: string; parse_state: string; error_code: string | null;
+  id: string; version_no: number; original_name: string; parse_state: string; index_mode: string | null; error_code: string | null;
   size_bytes: number; mime: string; is_current: boolean; is_latest: boolean; created_at: string;
 };
 type DocumentItem = {
   id: string; title: string; folder_id: string | null; tag_ids: string[]; favorite: boolean;
   state: "active" | "trashed"; metadata_revision: number; current_version_id: string | null;
-  latest_version_id: string | null; original_name: string | null; parse_state: string | null;
+  latest_version_id: string | null; original_name: string | null; parse_state: string | null; index_mode: string | null;
   error_code: string | null;
   size_bytes: number; mime: string | null; created_at: string; updated_at: string;
   trashed_at: string | null; restore_until: string | null; versions?: VersionItem[];
+};
+type SearchHit = {
+  document_id: string; version_id: string; chunk_id: string; title: string; snippet: string;
+  locator: { source?: { page?: number; paragraph?: number; slide?: number; line?: number } };
 };
 type UploadItem = {
   id: string; file: File; status: "waiting" | "uploading" | "done" | "duplicate" | "failed";
@@ -75,6 +79,7 @@ const errorMessages: Record<string, string> = {
   BLOCK_LIMIT_EXCEEDED: "文档结构太复杂，提取内容超过单文件限制。",
   IMAGE_PIXEL_LIMIT_EXCEEDED: "图片尺寸超过解析上限，原件仍可下载。",
   NETWORK_ERROR: "网络连接中断，请检查网络后重试。",
+  SEARCH_UNAVAILABLE: "语义检索模型暂不可用；可切换到关键词检索，或稍后重试。",
 };
 
 function messageFor(error: unknown): string {
@@ -98,7 +103,8 @@ function formatParseState(state: string | null): string {
   if (state === "queued") return "排队中";
   if (state === "extracting") return "提取文本";
   if (state === "ocr") return "文字识别";
-  if (state === "ready") return "已解析";
+  if (state === "indexing") return "建立检索索引";
+  if (state === "ready") return "已解析并可检索";
   if (state === "failed") return "解析失败";
   if (state === "cancelled") return "已取消";
   return state;
@@ -129,6 +135,10 @@ export default function Library({
   const [stateFilter, setStateFilter] = useState<"active" | "trashed">("active");
   const [sort, setSort] = useState<"updated_desc" | "name_asc" | "size_desc">("updated_desc");
   const [search, setSearch] = useState("");
+  const [searchMode, setSearchMode] = useState<"hybrid" | "keyword" | "semantic">("hybrid");
+  const [searchHits, setSearchHits] = useState<SearchHit[] | null>(null);
+  const [searchDegraded, setSearchDegraded] = useState(false);
+  const [searchBusy, setSearchBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [previewVersion, setPreviewVersion] = useState<VersionItem | null>(null);
@@ -148,6 +158,33 @@ export default function Library({
   const fileInput = useRef<HTMLInputElement>(null);
   const versionInput = useRef<HTMLInputElement>(null);
   const targetFolderId = folderFilter && folderFilter !== "inbox" ? folderFilter : null;
+
+  async function runFullTextSearch(mode = searchMode) {
+    const query = search.trim();
+    if (!query) return;
+    const scope = folderFilter === "inbox"
+      ? { document_ids: [], folder_ids: [], tag_ids: [], inbox: true, all_documents: false }
+      : folderFilter
+        ? { document_ids: [], folder_ids: [folderFilter], tag_ids: [], inbox: false, all_documents: false }
+        : tagFilter
+          ? { document_ids: [], folder_ids: [], tag_ids: [tagFilter], inbox: false, all_documents: false }
+          : { document_ids: [], folder_ids: [], tag_ids: [], inbox: false, all_documents: true };
+    setSearchBusy(true);
+    setError("");
+    try {
+      const result = await request<{ hits: SearchHit[]; degraded: boolean }>("/search", {
+        method: "POST",
+        body: JSON.stringify({ query, mode, scope, limit: 50 }),
+      });
+      setSearchHits(result.data.hits);
+      setSearchDegraded(result.data.degraded);
+    } catch (cause) {
+      setSearchHits([]);
+      setError(messageFor(cause));
+    } finally {
+      setSearchBusy(false);
+    }
+  }
 
   const loadCatalog = useCallback(async () => {
     try {
@@ -190,9 +227,10 @@ export default function Library({
 
   useEffect(() => { void loadCatalog(); }, [loadCatalog]);
   useEffect(() => { void loadDocuments(); }, [loadDocuments]);
+  useEffect(() => { setSearchHits(null); }, [folderFilter, tagFilter, favoriteFilter, stateFilter]);
 
   useEffect(() => {
-    if (!documents.some((document) => ["queued", "extracting", "ocr"].includes(document.parse_state ?? ""))) return;
+    if (!documents.some((document) => ["queued", "extracting", "ocr", "indexing"].includes(document.parse_state ?? ""))) return;
     const timer = window.setInterval(() => { void loadDocuments(true); }, 3000);
     return () => window.clearInterval(timer);
   }, [documents, loadDocuments]);
@@ -216,7 +254,7 @@ export default function Library({
   }, [loadSelectedDocument, selectedId]);
 
   useEffect(() => {
-    if (!selectedId || !activeDocument || !["queued", "extracting", "ocr"].includes(activeDocument.parse_state ?? "")) return;
+    if (!selectedId || !activeDocument || !["queued", "extracting", "ocr", "indexing"].includes(activeDocument.parse_state ?? "")) return;
     const timer = window.setInterval(() => {
       void loadSelectedDocument(selectedId);
       void loadDocuments(true);
@@ -540,7 +578,8 @@ export default function Library({
       <section className={`library-main ${selectedId ? "has-detail" : ""}`}>
         <header className="library-topbar">
           <div className="breadcrumb"><span>我的资料</span><ChevronRight size={14} /><strong>{heading}</strong></div>
-          <label className="search-box"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索文件名…" aria-label="搜索文件名" />{search && <button onClick={() => setSearch("")} aria-label="清除搜索"><X size={14} /></button>}</label>
+          <label className="search-box"><Search size={16} /><input value={search} onChange={(event) => { setSearch(event.target.value); setSearchHits(null); }} onKeyDown={(event) => { if (event.key === "Enter") void runFullTextSearch(); }} placeholder="搜索文件名或正文…" aria-label="搜索文件名或正文" />{search && <button onClick={() => { setSearch(""); setSearchHits(null); }} aria-label="清除搜索"><X size={14} /></button>}</label>
+          <select className="search-mode-select" value={searchMode} onChange={(event) => { const mode = event.target.value as typeof searchMode; setSearchMode(mode); if (searchHits !== null) void runFullTextSearch(mode); }} aria-label="检索方式"><option value="hybrid">混合</option><option value="keyword">关键词</option><option value="semantic">语义</option></select>
           <button className="top-icon-button" onClick={onSettings} aria-label="账户设置"><Settings2 size={18} /></button>
           <button className="top-icon-button" onClick={onLogout} disabled={busy} aria-label="退出登录"><LogOut size={17} /></button>
         </header>
@@ -564,11 +603,15 @@ export default function Library({
             {uploads.length > 4 && <p className="upload-more">另有 {uploads.length - 4} 个上传项目</p>}
           </section>}
 
-          <div className="file-toolbar"><div className="file-count">{loading ? "正在读取…" : `${documents.length} 个项目`}{tagFilter && selectedTag && <button className="filter-chip" onClick={() => setTagFilter(null)}><i style={{ background: selectedTag.color }} />{selectedTag.name}<X size={12} /></button>}</div><label className="sort-select"><ArrowDownUp size={14} /><select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} aria-label="排序"><option value="updated_desc">最近更新</option><option value="name_asc">名称 A–Z</option><option value="size_desc">文件大小</option></select></label></div>
+          <div className="file-toolbar"><div className="file-count">{searchHits !== null ? `${searchBusy ? "正在检索…" : `${searchHits.length} 条正文结果`}` : loading ? "正在读取…" : `${documents.length} 个项目`}{searchDegraded && <span className="search-degraded">向量暂不可用，已退回关键词</span>}{tagFilter && selectedTag && <button className="filter-chip" onClick={() => setTagFilter(null)}><i style={{ background: selectedTag.color }} />{selectedTag.name}<X size={12} /></button>}</div>{searchHits === null && <label className="sort-select"><ArrowDownUp size={14} /><select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} aria-label="排序"><option value="updated_desc">最近更新</option><option value="name_asc">名称 A–Z</option><option value="size_desc">文件大小</option></select></label>}</div>
 
           <div className="document-table" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
             <div className="table-head"><span>名称</span><span>状态</span><span>大小</span><span>更新日期</span><span></span></div>
-            {loading ? <div className="table-placeholder"><LoaderCircle className="spin" size={20} />正在加载资料</div>
+            {searchHits !== null ? searchBusy ? <div className="table-placeholder"><LoaderCircle className="spin" size={20} />正在检索正文</div> : searchHits.length === 0 ? <div className="empty-library"><div className="empty-icon"><Search size={22} /></div><strong>没有找到正文匹配项</strong><p>试试关键词、语义或混合检索，或缩小当前资料范围。</p></div> : searchHits.map((hit) => {
+                const source = hit.locator.source ?? {};
+                const location = source.page ? `第 ${source.page} 页` : source.paragraph ? `第 ${source.paragraph} 段` : source.slide ? `第 ${source.slide} 张幻灯片` : source.line ? `第 ${source.line} 行` : "文档片段";
+                return <button className="search-hit-row" key={hit.chunk_id} onClick={() => setSelectedId(hit.document_id)}><span className="search-hit-title"><strong>{hit.title}</strong><small>{location}</small></span><span className="search-hit-snippet">{hit.snippet}</span><ChevronRight size={16} /></button>;
+              }) : loading ? <div className="table-placeholder"><LoaderCircle className="spin" size={20} />正在加载资料</div>
               : documents.length === 0 ? <div className="empty-library" onClick={() => stateFilter === "active" && fileInput.current?.click()}><div className="empty-icon"><Folder size={24} /></div><strong>{search ? "没有找到匹配文件" : stateFilter === "trashed" ? "回收站是空的" : "这里还没有资料"}</strong><p>{search ? "试试其他关键词，或清除当前筛选。" : stateFilter === "trashed" ? "删除的文件会显示在这里。" : "拖入文件，或选择文件开始建立你的个人资料库。"}</p>{stateFilter === "active" && !search && <button className="primary-button" onClick={(event) => { event.stopPropagation(); fileInput.current?.click(); }}><Upload size={16} />选择文件</button>}</div>
               : documents.map((document) => {
                 const rowTags = tags.filter((tag) => document.tag_ids.includes(tag.id));
@@ -599,7 +642,7 @@ export default function Library({
             <input ref={versionInput} type="file" className="visually-hidden" accept=".pdf,.docx,.pptx,.txt,.md,.png,.jpg,.jpeg" onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; if (files.length && activeDocument) void sendFiles(files.slice(0, 1), { versionFor: activeDocument }); }} />
             <div className="version-list">{(activeDocument.versions ?? []).map((version) => <div className="version-row" key={version.id}><span className="version-number">v{version.version_no}</span><div className="version-main"><strong>{version.original_name}</strong><small>{formatDate(version.created_at)} · {formatParseState(version.parse_state)}</small></div>{version.is_current && <span className="current-label">当前</span>}<button className="download-button" onClick={() => setPreviewVersion(version)} aria-label={`预览版本${version.version_no}`} title="预览"><Eye size={15} /></button><a className="download-button" href={`/api/v1/versions/${version.id}/download`} aria-label={`下载版本${version.version_no}`} title="下载原件"><HardDrive size={15} /></a></div>)}</div>
           </div>
-          <div className="detail-section detail-state"><div className="detail-section-title">处理状态</div><p><span className={`doc-status ${activeDocument.parse_state === "ready" ? "is-ready" : activeDocument.parse_state === "failed" ? "is-failed" : ""}`}><i />{formatParseState(activeDocument.parse_state)}</span></p><small>{activeDocument.parse_state === "failed" ? parseErrorMessage(activeDocument.error_code) : activeDocument.parse_state === "ready" ? "解析文本已保存，可按页码、段落或幻灯片查看原文位置。" : "文件正在由本地解析服务处理，完成后预览会自动更新。"}</small>{activeDocument.parse_state === "failed" && activeDocument.versions?.find((version) => version.id === activeDocument.latest_version_id) && <button className="link-button reprocess-button" onClick={() => void reprocessVersion(activeDocument.versions!.find((version) => version.id === activeDocument.latest_version_id)!)} disabled={busy}><LoaderCircle size={14} />重新解析</button>}</div>
+          <div className="detail-section detail-state"><div className="detail-section-title">处理状态</div><p><span className={`doc-status ${activeDocument.parse_state === "ready" ? "is-ready" : activeDocument.parse_state === "failed" ? "is-failed" : ""}`}><i />{formatParseState(activeDocument.parse_state)}</span></p><small>{activeDocument.parse_state === "failed" ? parseErrorMessage(activeDocument.error_code) : activeDocument.parse_state === "ready" ? `内容已保存，可预览并全文检索${activeDocument.index_mode === "keyword_only" ? "（当前仅关键词可用）" : ""}。` : "文件正在由本地解析与索引服务处理，完成后预览和搜索会自动更新。"}</small>{activeDocument.parse_state === "failed" && activeDocument.versions?.find((version) => version.id === activeDocument.latest_version_id) && <button className="link-button reprocess-button" onClick={() => void reprocessVersion(activeDocument.versions!.find((version) => version.id === activeDocument.latest_version_id)!)} disabled={busy}><LoaderCircle size={14} />重新解析</button>}</div>
           <div className="detail-footer">{stateFilter === "active" ? <><button className="danger-outline" onClick={() => void moveToTrash(activeDocument)} disabled={busy}><Trash2 size={15} />移入回收站</button><a className="download-full" href={activeDocument.latest_version_id ? `/api/v1/versions/${activeDocument.latest_version_id}/download` : "#"} aria-disabled={!activeDocument.latest_version_id}><HardDrive size={15} />下载原件</a></> : <><button className="secondary-button" onClick={() => void restoreDocument(activeDocument)} disabled={busy}>恢复文件</button><button className="danger-outline" onClick={() => openDialog({ kind: "permanent", document: activeDocument })} disabled={busy}><Trash2 size={15} />永久删除</button></>}</div>
         </aside>}
       </section>

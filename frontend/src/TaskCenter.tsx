@@ -29,6 +29,7 @@ const kindLabels: Record<string, string> = { parse: "解析文档", document_pur
 const stageLabels: Record<string, string> = {
   starting: "准备任务",
   extracting: "提取文档文本",
+  indexing: "建立检索索引",
   ocr: "本地 OCR 识别",
   finalizing: "保存解析结果",
   completed: "处理完成",

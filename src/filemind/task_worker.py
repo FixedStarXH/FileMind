@@ -13,9 +13,11 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from filemind.config import get_settings
+from filemind.indexing import INDEX_PIPELINE_VERSION, make_chunks
 from filemind.models import (
     BackgroundTask,
     Blob,
+    Chunk,
     Document,
     DocumentVersion,
     ExtractedBlock,
@@ -311,10 +313,9 @@ def _parse_document(engine: Engine, claimed: ClaimedTask) -> None:
         if row is None:
             raise ParseFailure("RESOURCE_UNAVAILABLE")
         version, blob, _document = row
+        generation = (version.active_generation or 0) + 1
         source = blob_path(settings.storage_root, claimed.owner_id, blob.storage_key)
         suffix = Path(version.original_name).suffix.casefold()
-
-    generation = 1
 
     def update_stage(stage: str, completed: int, total: int | None) -> None:
         now = datetime.now(UTC)
@@ -353,13 +354,29 @@ def _parse_document(engine: Engine, claimed: ClaimedTask) -> None:
                 task.progress_completed = completed
                 task.progress_total = total
                 task.updated_at = now
-                version_row.parse_state = "ocr" if stage == "ocr" else "extracting"
+                version_row.parse_state = stage if stage in {"ocr", "indexing"} else "extracting"
         if cancelled:
             raise TaskCancelled("task cancelled")
 
     # A first checkpoint both validates the lease and exposes a useful stage before parsing.
     update_stage("extracting", 0, None)
     blocks, page_count = extract_document(source, suffix, settings.max_pdf_pages, update_stage)
+    update_stage("indexing", 0, None)
+    extracted_rows = [
+        ExtractedBlock(
+            owner_id=claimed.owner_id,
+            version_id=claimed.version_id,
+            generation=generation,
+            ordinal=ordinal,
+            kind=block.kind,
+            text=block.text,
+            locator=block.locator,
+            ocr_confidence=block.ocr_confidence,
+        )
+        for ordinal, block in enumerate(blocks)
+    ]
+    chunk_rows = make_chunks(claimed.owner_id, claimed.version_id, generation, extracted_rows)
+    update_stage("indexing", len(chunk_rows), len(chunk_rows))
     now = datetime.now(UTC)
     with Session(engine) as session, session.begin():
         if not _is_current_lease(session, claimed, now):
@@ -391,7 +408,6 @@ def _parse_document(engine: Engine, claimed: ClaimedTask) -> None:
             raise LeaseLost("task lease lost")
         if version_row is None or document is None or document.state != "active":
             raise ParseFailure("RESOURCE_UNAVAILABLE")
-        generation = (version_row.active_generation or 0) + 1
         session.execute(
             delete(ExtractedBlock).where(
                 ExtractedBlock.owner_id == claimed.owner_id,
@@ -399,30 +415,35 @@ def _parse_document(engine: Engine, claimed: ClaimedTask) -> None:
                 ExtractedBlock.generation == generation,
             )
         )
-        session.add_all(
-            [
-                ExtractedBlock(
-                    owner_id=claimed.owner_id,
-                    version_id=claimed.version_id,
-                    generation=generation,
-                    ordinal=ordinal,
-                    kind=block.kind,
-                    text=block.text,
-                    locator=block.locator,
-                    ocr_confidence=block.ocr_confidence,
-                )
-                for ordinal, block in enumerate(blocks)
-            ]
+        session.execute(
+            delete(Chunk).where(
+                Chunk.owner_id == claimed.owner_id,
+                Chunk.version_id == claimed.version_id,
+                Chunk.generation == generation,
+            )
         )
+        session.add_all([*extracted_rows, *chunk_rows])
         version_row.page_count = page_count if page_count > 0 else None
         version_row.active_generation = generation
-        version_row.pipeline_version = PIPELINE_VERSION
+        version_row.pipeline_version = f"{PIPELINE_VERSION}+{INDEX_PIPELINE_VERSION}"
         version_row.parse_state = "ready"
         version_row.error_code = None
+        version_row.index_mode = (
+            "hybrid"
+            if chunk_rows and all(chunk.embedding is not None for chunk in chunk_rows)
+            else "keyword_only"
+        )
+        if document.latest_version_id == version_row.id:
+            document.current_version_id = version_row.id
+            document.updated_at = now
+            user = session.scalar(select(User).where(User.id == claimed.owner_id).with_for_update())
+            if user is None:
+                raise ParseFailure("RESOURCE_UNAVAILABLE")
+            user.index_revision += 1
         task.status = "succeeded"
         task.stage = "completed"
-        task.progress_completed = page_count if page_count else len(blocks)
-        task.progress_total = page_count if page_count else len(blocks)
+        task.progress_completed = len(chunk_rows)
+        task.progress_total = len(chunk_rows)
         task.error_code = None
         task.lease_until = None
         task.heartbeat_at = None
