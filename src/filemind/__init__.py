@@ -1,0 +1,1 @@
+"""FileMind application package."""

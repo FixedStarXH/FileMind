@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+.git
+.venv
+.uv-cache
+.python
+data
+models
+node_modules
+dist
+__pycache__
+*.pyc
+*.log
+*.zip
+docs

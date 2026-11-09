@@ -2,7 +2,7 @@
 
 面向大学生的 AI 个人学习与求职资料管理系统。将课件、论文、证书和简历变成可检索、可引用、可整理的个人资料库。
 
-**当前状态：M0 基础工程进行中。** Python 固定为 3.12；项目名为工作名。技术选型是实施方案，性能数字是验收目标，不是已测成绩。
+**当前状态：M0 基础工程已完成，M1 尚未开始。** Python 固定为 3.12；项目名为工作名。技术选型是实施方案，性能数字是验收目标，不是已测成绩。
 
 ## 已确认的产品边界
 
@@ -14,14 +14,21 @@
 
 ## 本地开发
 
-先安装 Python 3.12、uv 与 Docker Desktop，在项目根目录复制 `.env.example` 为 `.env`，生成强 `POSTGRES_PASSWORD` 和 `SESSION_SECRET`，再运行：
+先安装 Python 3.12、uv 与 Docker Desktop，在项目根目录复制 `.env.example` 为 `.env`，生成强 `POSTGRES_PASSWORD` 和 `SESSION_SECRET`。直接启动基础服务：
+
+```powershell
+docker compose up -d --build
+```
+
+打开 `http://127.0.0.1:8000/health/live` 和 `http://127.0.0.1:8000/health/ready`。数据库迁移在本地 Python 环境执行；将 `.env` 的 `DATABASE_URL` 设为 `postgresql+psycopg://filemind:<POSTGRES_PASSWORD>@127.0.0.1:5433/filemind`，`REDIS_URL` 设为 `redis://127.0.0.1:6380/0`，`STORAGE_ROOT` 设为 `./data/files`，然后运行：
 
 ```powershell
 uv sync --dev
+uv run alembic upgrade head
 uv run uvicorn filemind.main:app --app-dir src --reload
 ```
 
-基础 API 默认监听 `http://127.0.0.1:8000`。数据库与 Redis 通过 `docker compose up -d postgres redis` 启动；应用容器待 M0 验证完成后再启用。`/health/live` 检查进程，`/health/ready` 在数据库、Redis、文件目录全部可用时返回就绪。AI Key 可留空，文件基础能力不依赖它。
+基础 API 默认监听 `http://127.0.0.1:8000`。本地 Python 进程与 Compose API 容器不能同时占用该端口，切换时先停止另一进程。`/health/live` 检查进程，`/health/ready` 在数据库、Redis、文件目录全部可用时返回就绪。DeepSeek Key 可留空，健康检查会显示 `not_configured`。
 
 ## 文档导航
 
@@ -40,6 +47,7 @@ uv run uvicorn filemind.main:app --app-dir src --reload
 | [11 开发计划](docs/11-delivery-plan.md) | 模块依赖、每模块提交、完成标准 |
 | [12 追踪与设计审查](docs/12-traceability-and-review.md) | 需求映射、风险、实施前验证与已决事项 |
 | [13 官方参考](docs/13-references.md) | 核对过的官方来源 |
+| [14 M0 验证记录](docs/14-m0-validation.md) | 基础工程的实际运行结果与限制 |
 | [配置模板](.env.example) | 无真实密钥的目标配置；应用实现后生效 |
 
 先阅读 01、02、07 确认产品与使用体验，再按 03 → 04 → 05 → 06 进入实现。规格冲突以 01 的产品范围与 05 的外部契约为准，并同步修订所有受影响文档。

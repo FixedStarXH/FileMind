@@ -2,13 +2,13 @@
 
 ## 1. 运行拓扑
 
-Windows 开发机使用 Docker Desktop/WSL2 的 Linux 容器；浏览器用 Edge。正式部署为单台 Linux 主机 + Docker Compose，前端与 API 同源。当前尚未生成 Compose 或安装依赖。
+Windows 开发机使用 Docker Desktop/WSL2 的 Linux 容器；浏览器用 Edge。正式部署为单台 Linux 主机 + Docker Compose，前端与 API 同源。M0 已提供 API、PostgreSQL、Redis 的基础 Compose；Nginx、worker、dispatcher、scheduler 将在后续模块加入。
 
 服务：nginx、api、worker-ingest、worker-agent、worker-export、dispatcher、scheduler、postgres、redis。worker 使用同一 backend 镜像与不同启动参数；OCR/embedding 权重放只读模型缓存，业务文件放共享持久卷。API 与 worker 以非 root 用户运行。
 
 默认 OCR 并发1、Agent并发2、导出并发1；API数据库池5+overflow5，worker每进程独立小池。参考资源4核8GiB，推荐开发机为容器预留至少8GiB，首次安装和大PDF需实测内存，不能把参考配置当保证。
 
-当前环境的系统内存读取受限，尚未确认实际硬件与Docker可用性；这不阻塞文档设计，M0开始时需实际检查。若机器无法分配上述资源，再讨论降低模型/并发或使用服务器。
+M0 已确认 Docker 可用，但尚未验证 OCR 与向量模型的峰值内存；在 M4/M5 按实际机器资源决定并发数。若机器无法分配上述资源，再讨论降低模型/并发或使用服务器。
 
 只公开 Nginx HTTP/HTTPS 端口；PostgreSQL/Redis 不映射公网；nginx 配置52MiB请求上限、上传超时、SSE禁缓冲与长连接。生产必须HTTPS，本地绑定127.0.0.1。
 

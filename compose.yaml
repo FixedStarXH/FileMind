@@ -1,0 +1,67 @@
+name: filemind
+
+services:
+  api:
+    build: .
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://filemind:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/filemind
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ROOT: /data/files
+      MODEL_CACHE_DIR: /data/models
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - filemind_files:/data/files
+      - filemind_models:/data/models:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  postgres:
+    image: pgvector/pgvector:0.8.1-pg17
+    environment:
+      POSTGRES_DB: filemind
+      POSTGRES_USER: filemind
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - filemind_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U filemind -d filemind"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4.2-alpine
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1000"]
+    ports:
+      - "127.0.0.1:6380:6379"
+    volumes:
+      - filemind_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  filemind_postgres:
+  filemind_redis:
+  filemind_files:
+  filemind_models:
