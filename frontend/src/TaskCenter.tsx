@@ -26,13 +26,36 @@ const statusLabels: Record<TaskItem["status"], string> = {
   succeeded: "已完成", failed: "失败", cancelled: "已取消",
 };
 const kindLabels: Record<string, string> = { parse: "解析文档", document_purge: "永久删除" };
+const stageLabels: Record<string, string> = {
+  starting: "准备任务",
+  extracting: "提取文档文本",
+  ocr: "本地 OCR 识别",
+  finalizing: "保存解析结果",
+  completed: "处理完成",
+  failed: "处理失败",
+  cancelled: "已取消",
+};
+const parseErrors: Record<string, string> = {
+  ENCRYPTED_PDF: "PDF 设置了密码",
+  CORRUPT_DOCUMENT: "文件损坏或内容无法读取",
+  PAGE_LIMIT_EXCEEDED: "页数超过支持上限",
+  PDF_PAGE_PIXEL_LIMIT_EXCEEDED: "PDF 页面尺寸超过渲染上限",
+  IMAGE_PIXEL_LIMIT_EXCEEDED: "图片尺寸超过解析上限",
+  PARAGRAPH_LIMIT_EXCEEDED: "Word 文档段落超过上限",
+  OCR_UNAVAILABLE: "本地 OCR 模型不可用",
+  OCR_FAILED: "本地文字识别失败",
+  PDF_RENDER_FAILED: "PDF 页面转换失败",
+  BLOCK_LIMIT_EXCEEDED: "提取内容数量超过上限",
+  BLOCK_SIZE_LIMIT_EXCEEDED: "单段内容超过上限",
+};
 
 function taskMessage(task: TaskItem): string {
   if (task.kind === "parse" && task.stage === "waiting_parser") return "等待解析模块上线后继续处理";
   if (task.stage === "retry_wait") return "将自动重试";
-  if (task.error_code) return task.error_code === "WORKER_LOST" ? "工作进程已恢复，任务将重试" : "处理失败，可重试任务";
+  if (task.error_code === "WORKER_LOST") return "工作进程已恢复，任务将重试";
+  if (task.error_code) return `${parseErrors[task.error_code] ?? task.error_code}；可重试任务`;
   if (task.stage === "purging") return "正在清理文件和版本";
-  return task.stage;
+  return stageLabels[task.stage] ?? task.stage;
 }
 
 export default function TaskCenter({ csrf, onLibrary, onSettings, onLogout }: Props) {

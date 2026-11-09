@@ -17,7 +17,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import FileResponse, JSONResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from filemind.auth import Auth, WriteAuth
@@ -46,6 +46,7 @@ def version_payload(version: DocumentVersion, blob: Blob) -> dict[str, object]:
         "version_no": version.version_no,
         "original_name": version.original_name,
         "parse_state": version.parse_state,
+        "error_code": version.error_code,
         "size_bytes": blob.size_bytes,
         "mime": blob.mime,
         "sha256": blob.sha256,
@@ -104,7 +105,8 @@ async def upload_document(
                     select(Document)
                     .join(
                         DocumentVersion,
-                        DocumentVersion.id == Document.current_version_id,
+                        DocumentVersion.id
+                        == func.coalesce(Document.current_version_id, Document.latest_version_id),
                     )
                     .join(Blob, Blob.id == DocumentVersion.blob_id)
                     .where(
@@ -167,7 +169,7 @@ async def upload_document(
             folder_id=folder_id,
             title=staged.original_name,
             state="active",
-            current_version_id=version_id,
+            current_version_id=None,
             latest_version_id=version_id,
         )
         version = DocumentVersion(

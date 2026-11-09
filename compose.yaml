@@ -107,6 +107,43 @@ services:
       - ALL
     restart: unless-stopped
 
+  worker-ingestion:
+    build: .
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://filemind:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/filemind
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_ROOT: /data/files
+      MODEL_CACHE_DIR: /data/models
+    command:
+      - /app/.venv/bin/celery
+      - -A
+      - filemind.celery_app:celery_app
+      - worker
+      - --queues=ingestion
+      - --concurrency=1
+      - --loglevel=INFO
+    volumes:
+      - filemind_files:/data/files:ro
+      - filemind_models:/data/models:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    mem_limit: 3g
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
   postgres:
     image: pgvector/pgvector:0.8.1-pg17
     environment:

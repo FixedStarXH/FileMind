@@ -62,6 +62,13 @@ class Settings(BaseSettings):
             raise ValueError("bge-small-zh-v1.5 requires EMBEDDING_DIM=512")
         return value
 
+    @field_validator("ocr_backend")
+    @classmethod
+    def validate_ocr_backend(cls, value: str) -> str:
+        if value != "rapidocr":
+            raise ValueError("OCR_BACKEND currently supports only rapidocr")
+        return value
+
     @field_validator(
         "max_upload_bytes",
         "max_pdf_pages",

@@ -17,8 +17,11 @@
 | [Celery Redis transport](https://docs.celeryq.dev/en/stable/getting-started/backends-and-brokers/redis.html) | Redis visibility timeout 与 worker 退出时未确认任务的重投行为；FileMind 同时用数据库租约与 Outbox 作为恢复依据 |
 | [Celery FAQ](https://docs.celeryq.dev/en/stable/faq.html) | Celery 不正式支持 Windows，worker 用 Linux 容器运行 |
 | [BGE 中文小模型](https://huggingface.co/BAAI/bge-small-zh-v1.5) | 模型用途、维数与推理方式，实施时固定revision |
-| [RapidOCR](https://github.com/RapidAI/RapidOCR) | 本地OCR，支持ONNX Runtime等推理后端 |
+| [RapidOCR 使用文档](https://rapidai.github.io/RapidOCRDocs/main/en/install_usage/rapidocr/usage/) | Python API、文本框坐标、置信度与ONNX Runtime后端 |
+| [RapidOCR 安装说明](https://rapidai.github.io/RapidOCRDocs/main/en/install_usage/rapidocr/install/) | 安装方式、模型随包分发及 headless OpenCV |
+| [RapidOCR 许可证与模型归属](https://github.com/RapidAI/RapidOCR) | Apache-2.0 源代码和模型说明；模型源自 PaddleOCR，遵循其适用许可 |
 | [PDF.js](https://mozilla.github.io/pdf.js/) | 浏览器PDF渲染 |
+| [pdfjs-dist on npm](https://www.npmjs.com/package/pdfjs-dist) | PDF.js 浏览器包；实际版本由 frontend/package-lock.json 锁定 |
 | [Vite](https://vite.dev/guide/) | 前端开发/构建，Node要求需与选定版本核对 |
 | [Paperless-ngx](https://github.com/paperless-ngx/paperless-ngx) | 文件管理、OCR与归档流程参考；本项目独立设计学生场景 |
 

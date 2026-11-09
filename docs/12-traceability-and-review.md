@@ -51,6 +51,8 @@
 | 客户端已下载的敏感材料无法撤回 | 清晰区分服务端删除与本地副本 | M8/UI |
 | 备份在7天内仍含已删除文件 | 恢复前重放可用删除记录；无法核实时保持服务关闭 | M10演练 |
 
+2026-11-09 M4 复核：已验证 Python 3.12 环境可安装 pypdf、pypdfium2、python-docx、python-pptx、RapidOCR + ONNX Runtime；RapidOCR 与 OCR 模型使用 Apache-2.0 许可说明，模型随依赖 wheel 安装。本地 worker 使用 CPU 单并发与容器内存上限；PDF 页数、需渲染页面像素和图片像素均设上限。扫描页 OCR 在单页调用内部不保证硬超时，取消在页面边界生效，异常 worker 由 Celery 回收。完整链路和样例以 [18 M4 验证记录](18-m4-validation.md) 为准。
+
 ## 5. 后续真正需要用户信息的节点
 
 - GitHub目标仓库已由用户指定为 `https://github.com/FixedStarXH/FileMind`。

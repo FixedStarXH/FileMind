@@ -1,6 +1,6 @@
 # 04 数据库逻辑设计
 
-PostgreSQL 17，时区 UTC。ID 使用 UUID；时间 timestamptz；业务字节数 bigint；所有用户数据带 owner_id。M3 已迁移 `tasks` 和 `outbox`；M2 已迁移 `folders`、`tags`、`blobs`、`documents`、`document_versions`、`document_tags` 和 `idempotency_keys`；M1 已迁移 `users` 与 `sessions`。其余表是后续模块的设计依据。
+PostgreSQL 17，时区 UTC。ID 使用 UUID；时间 timestamptz；业务字节数 bigint；所有用户数据带 owner_id。M4 迁移 `0005_document_parsing` 已创建 `extracted_blocks`；M3 已迁移 `tasks` 和 `outbox`；M2 已迁移文件生命周期表；M1 已迁移 `users` 与 `sessions`。其余表是后续模块的设计依据。
 
 ## 1. 表结构
 
@@ -17,7 +17,7 @@ PostgreSQL 17，时区 UTC。ID 使用 UUID；时间 timestamptz；业务字节�
 | document_versions | owner_id、document_id、blob_id、version_no、original_name、parse_state、index_mode?（hybrid/keyword_only）、active_generation?、pipeline_version、page_count?、error_code?；UNIQUE(document_id,version_no) |
 | document_tags | owner_id、document_id、tag_id；联合主键(document_id,tag_id) |
 | chunks | owner_id、version_id、generation、ordinal、text、locator JSONB、token_count、embedding? vector(512)、embedding_model?、search_vector tsvector；UNIQUE(version_id,generation,ordinal) |
-| extracted_blocks | owner_id、version_id、generation、ordinal、kind、text、locator JSONB、ocr_confidence?；保存预览与定位信息 |
+| extracted_blocks | owner_id、version_id、generation、ordinal、kind、text、locator JSONB、ocr_confidence?；保存预览与定位信息，复合外键保证版本所有者一致 |
 | tasks | owner_id、kind、resource_id、version_id?、status、stage、progress_completed/total?、attempt、lease_until?、fencing_token、heartbeat_at?、error_code?、cancel_requested、retry_of?、dispatch_seq、last_enqueued_at? |
 | outbox | event_type、aggregate_id(task_id)、dispatch_seq、payload JSONB（只含 task_id）、published_at?、next_attempt_at、attempt；UNIQUE(event_type,aggregate_id,dispatch_seq) |
 | conversations | owner_id、title、scope JSONB、revision |
@@ -53,8 +53,8 @@ erDiagram
 ```
 
 - 对所有被跨表引用的用户资源建立 UNIQUE(owner_id,id)，使用包含 owner_id 的复合 FK，防止 A 用户文件引用 B 用户文件夹/标签/版本。
-- `documents.current_version_id` 与 `latest_version_id` 必须属于该 document；建立 `(id,version_id)` 到 versions `(document_id,id)` 的延迟 FK。M2 首版上传时两者指向初始版本，新增版本时仅更新 latest；文件内容尚未进入解析流水线。
-- 同用户相同 blob 可复用，但只有显式版本上传才在现有 document 下创建新版本。普通上传若匹配 active 文件的当前版本，则返回已有文档列表；只匹配历史版本或回收站文件时可以新建 document 并复用 blob；不跨账户去重。
+- `documents.current_version_id` 与 `latest_version_id` 必须属于该 document；建立 `(id,version_id)` 到 versions `(document_id,id)` 的延迟 FK。M4 解析完成仅更新版本的 `active_generation`；M5 索引成功后才激活首版 `current_version_id`。新增版本解析完成前仍只更新 `latest_version_id`。
+- 同用户相同 blob 可复用，但只有显式版本上传才在现有 document 下创建新版本。普通上传若匹配 active 文件的当前版本，则返回已有文档列表；在 M5 索引尚未激活 current_version 时，以 latest_version 作为临时重复检查版本。只匹配历史版本或回收站文件时可以新建 document 并复用 blob；不跨账户去重。
 - quota 更新锁定 users 行，约束 `used_bytes>=0`、`reserved_bytes>=0`、二者和≤quota；物理 blob 按用户唯一对象计费，删除最后引用后扣除。
 - metadata_revision 每次修改递增；current_version 激活、进入回收站也递增，令旧整理计划失效。
 - 文件夹 sibling 名称唯一用 PostgreSQL `NULLS NOT DISTINCT`，根目录 parent_id=null；收件箱是 folder_id=null 的虚拟视图，数据库中不另建收件箱目录。删除含子文件夹或文件的目录返回409，用户先移动内容。目录移动校验祖先链。
@@ -69,7 +69,7 @@ erDiagram
 
 ## 4. 生命周期与迁移
 
-- 原始 blob 不覆盖；更新产生新版本。重建索引生成新 generation，激活后延迟清理旧 generation。
+- 原始 blob 不覆盖；更新产生新版本。M4 提取写入新 extracted_blocks generation，并在事务中更新 active_generation；M5 索引 generation 与提取 generation 对齐，激活后延迟清理旧 generation。
 - 引用保存版本与定位快照；片段清理后仍可定位该版本。文件进回收站时，历史回答隐藏对应原文片段和引用摘录，引用标记为 trashed；恢复后重新校验可定位。永久删除时 quote 置空、locator 不再返回、status=unavailable。
 - 删除某文件时，包含其内容的聊天回答、run 工具结果、计划、事件和 checkpoint 一并清理或标为已移除；idempotency_keys.response_body 及错误/重放缓存中若含资料正文也要清理。无法安全拆除内容时删除整段关联会话，并在 UI 告知。
 - 历史版本保留至文件永久删除；首版不提供单版本删除。导出24小时过期，事件7天，审计90天；备份另按运维策略轮换。

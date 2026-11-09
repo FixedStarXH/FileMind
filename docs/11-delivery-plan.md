@@ -9,7 +9,7 @@
 | M1 | 账户、Session/CSRF、配额基础、登录与设置页 | M0 | 登录/CSRF/改密/退出/限流/配额；`feat: add private accounts and quota` |
 | M2 | 同步上传与 blob、文件夹/标签、版本、回收站 | M1 | 无AI可管理文件、删除恢复、重复上传、下载与配额更新；上传标记 not_started；`feat: implement document lifecycle` |
 | M3 | Outbox、Celery租约、任务中心、取消恢复；上传/删除接入202任务 | M2 | kill worker后恢复、幂等；parse task 暂停等待 M4；`feat: add durable background processing` |
-| M4 | 解析、OCR、结构化预览与定位 | M3 | 每种支持类型成功/失败样本；`feat: parse documents with local OCR` |
+| M4 | 解析、OCR、结构化预览与定位（已完成） | M3 | 每种支持类型成功/失败样本；`feat: parse documents with local OCR` |
 | M5 | 中文全文、BGE向量、混合检索 | M4 | 三组检索对照评测；`feat: add hybrid document retrieval` |
 | M6 | DeepSeek adapter、LangGraph QA、引用、SSE | M5 | 引用正确定位、断线回放、缺Key处理；`feat: add cited document assistant` |
 | M7 | 整理方案、审批、事务执行、审计 | M6 | 版本冲突、双击审批、重放不重复写；`feat: add approved file organization` |

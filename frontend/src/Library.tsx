@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from "react";
 import {
-  Archive, ArrowDownUp, Check, ChevronDown, ChevronRight, Clock3, FileArchive, FileImage,
+  Archive, ArrowDownUp, Check, ChevronDown, ChevronRight, Clock3, Eye, FileArchive, FileImage,
   FileText, Folder, FolderPlus, HardDrive, Heart, LoaderCircle, LogOut, MoreHorizontal,
   Plus, Search, Settings2, ShieldCheck, Star, Tag as TagIcon, Trash2, Upload, X,
 } from "lucide-react";
-import { ApiError, request, uploadFile } from "./api";
+import { request, uploadFile } from "./api";
+const DocumentPreview = lazy(() => import("./DocumentPreview"));
 
 type User = { id: string; email: string };
 type Settings = {
@@ -17,13 +18,14 @@ type Settings = {
 type FolderItem = { id: string; name: string; parent_id: string | null; revision: number };
 type TagItem = { id: string; name: string; color: string; document_count: number };
 type VersionItem = {
-  id: string; version_no: number; original_name: string; parse_state: string;
+  id: string; version_no: number; original_name: string; parse_state: string; error_code: string | null;
   size_bytes: number; mime: string; is_current: boolean; is_latest: boolean; created_at: string;
 };
 type DocumentItem = {
   id: string; title: string; folder_id: string | null; tag_ids: string[]; favorite: boolean;
   state: "active" | "trashed"; metadata_revision: number; current_version_id: string | null;
   latest_version_id: string | null; original_name: string | null; parse_state: string | null;
+  error_code: string | null;
   size_bytes: number; mime: string | null; created_at: string; updated_at: string;
   trashed_at: string | null; restore_until: string | null; versions?: VersionItem[];
 };
@@ -63,6 +65,15 @@ const errorMessages: Record<string, string> = {
   CONFIRMATION_MISMATCH: "输入的文件名不一致。",
   TRASH_EXPIRED: "此文件已超过恢复期限。",
   SOURCE_UNAVAILABLE: "原始文件暂时不可用。",
+  ENCRYPTED_PDF: "PDF 设置了密码，当前无法解析；原件仍可下载。",
+  CORRUPT_DOCUMENT: "文件内容无法读取，请检查文件是否损坏。",
+  PAGE_LIMIT_EXCEEDED: "页数超过首版支持上限，原件仍可下载。",
+  PARAGRAPH_LIMIT_EXCEEDED: "Word 文档段落过多，当前无法解析。",
+  OCR_UNAVAILABLE: "本地 OCR 模型不可用，请检查部署环境后重试。",
+  OCR_FAILED: "文字识别失败，可下载原件或稍后重试。",
+  PDF_RENDER_FAILED: "PDF 页面转换失败，请检查文件后重试。",
+  BLOCK_LIMIT_EXCEEDED: "文档结构太复杂，提取内容超过单文件限制。",
+  IMAGE_PIXEL_LIMIT_EXCEEDED: "图片尺寸超过解析上限，原件仍可下载。",
   NETWORK_ERROR: "网络连接中断，请检查网络后重试。",
 };
 
@@ -84,9 +95,17 @@ function formatDate(value: string): string {
 
 function formatParseState(state: string | null): string {
   if (!state || state === "not_started") return "待解析";
-  if (state === "ready") return "可检索";
+  if (state === "queued") return "排队中";
+  if (state === "extracting") return "提取文本";
+  if (state === "ocr") return "文字识别";
+  if (state === "ready") return "已解析";
   if (state === "failed") return "解析失败";
+  if (state === "cancelled") return "已取消";
   return state;
+}
+
+function parseErrorMessage(code: string | null): string {
+  return code ? errorMessages[code] ?? `解析失败（${code}），原始文件仍可下载。` : "解析失败，原始文件仍可下载。";
 }
 
 function fileIcon(mime: string | null) {
@@ -112,6 +131,7 @@ export default function Library({
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [previewVersion, setPreviewVersion] = useState<VersionItem | null>(null);
   const [activeDocument, setActiveDocument] = useState<DocumentItem | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
   const [folderDraft, setFolderDraft] = useState("");
@@ -142,8 +162,8 @@ export default function Library({
     }
   }, []);
 
-  const loadDocuments = useCallback(async () => {
-    setLoading(true);
+  const loadDocuments = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     setError("");
     const query = new URLSearchParams({ state: stateFilter, sort, limit: "100" });
     if (folderFilter) query.set("folder_id", folderFilter);
@@ -156,7 +176,7 @@ export default function Library({
     } catch (cause) {
       setError(messageFor(cause));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [folderFilter, favoriteFilter, search, sort, stateFilter, tagFilter]);
 
@@ -170,6 +190,12 @@ export default function Library({
 
   useEffect(() => { void loadCatalog(); }, [loadCatalog]);
   useEffect(() => { void loadDocuments(); }, [loadDocuments]);
+
+  useEffect(() => {
+    if (!documents.some((document) => ["queued", "extracting", "ocr"].includes(document.parse_state ?? ""))) return;
+    const timer = window.setInterval(() => { void loadDocuments(true); }, 3000);
+    return () => window.clearInterval(timer);
+  }, [documents, loadDocuments]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -188,6 +214,15 @@ export default function Library({
       .catch((cause) => { if (alive) setError(messageFor(cause)); });
     return () => { alive = false; };
   }, [loadSelectedDocument, selectedId]);
+
+  useEffect(() => {
+    if (!selectedId || !activeDocument || !["queued", "extracting", "ocr"].includes(activeDocument.parse_state ?? "")) return;
+    const timer = window.setInterval(() => {
+      void loadSelectedDocument(selectedId);
+      void loadDocuments(true);
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [activeDocument, loadDocuments, loadSelectedDocument, selectedId]);
 
   function updateUpload(id: string, update: Partial<UploadItem>) {
     setUploads((current) => current.map((item) => item.id === id ? { ...item, ...update } : item));
@@ -243,6 +278,20 @@ export default function Library({
       setSelectedId(options.versionFor.id);
       try { await loadSelectedDocument(options.versionFor.id); }
       catch (cause) { setError(messageFor(cause)); }
+    }
+  }
+
+  async function reprocessVersion(version: VersionItem) {
+    try {
+      setBusy(true);
+      await request(`/versions/${version.id}/reprocess`, { method: "POST", headers: { "X-CSRF-Token": csrf }, body: "{}" });
+      setNotice("已重新加入解析队列。");
+      if (selectedId) await loadSelectedDocument(selectedId);
+      await loadDocuments();
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -548,9 +597,9 @@ export default function Library({
           </div>
           <div className="detail-section"><div className="detail-section-title"><span>版本记录</span>{stateFilter === "active" && <button className="link-button" onClick={() => versionInput.current?.click()}><Plus size={14} />新版本</button>}</div>
             <input ref={versionInput} type="file" className="visually-hidden" accept=".pdf,.docx,.pptx,.txt,.md,.png,.jpg,.jpeg" onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; if (files.length && activeDocument) void sendFiles(files.slice(0, 1), { versionFor: activeDocument }); }} />
-            <div className="version-list">{(activeDocument.versions ?? []).map((version) => <div className="version-row" key={version.id}><span className="version-number">v{version.version_no}</span><div className="version-main"><strong>{version.original_name}</strong><small>{formatDate(version.created_at)} · {formatParseState(version.parse_state)}</small></div>{version.is_current && <span className="current-label">当前</span>}<a className="download-button" href={`/api/v1/versions/${version.id}/download`} aria-label={`下载版本${version.version_no}`}><HardDrive size={15} /></a></div>)}</div>
+            <div className="version-list">{(activeDocument.versions ?? []).map((version) => <div className="version-row" key={version.id}><span className="version-number">v{version.version_no}</span><div className="version-main"><strong>{version.original_name}</strong><small>{formatDate(version.created_at)} · {formatParseState(version.parse_state)}</small></div>{version.is_current && <span className="current-label">当前</span>}<button className="download-button" onClick={() => setPreviewVersion(version)} aria-label={`预览版本${version.version_no}`} title="预览"><Eye size={15} /></button><a className="download-button" href={`/api/v1/versions/${version.id}/download`} aria-label={`下载版本${version.version_no}`} title="下载原件"><HardDrive size={15} /></a></div>)}</div>
           </div>
-          <div className="detail-section detail-state"><div className="detail-section-title">处理状态</div><p><span className={`doc-status ${activeDocument.parse_state === "ready" ? "is-ready" : ""}`}><i />{formatParseState(activeDocument.parse_state)}</span></p><small>文档解析将在下一处理模块接入；当前已安全保存原始文件。</small></div>
+          <div className="detail-section detail-state"><div className="detail-section-title">处理状态</div><p><span className={`doc-status ${activeDocument.parse_state === "ready" ? "is-ready" : activeDocument.parse_state === "failed" ? "is-failed" : ""}`}><i />{formatParseState(activeDocument.parse_state)}</span></p><small>{activeDocument.parse_state === "failed" ? parseErrorMessage(activeDocument.error_code) : activeDocument.parse_state === "ready" ? "解析文本已保存，可按页码、段落或幻灯片查看原文位置。" : "文件正在由本地解析服务处理，完成后预览会自动更新。"}</small>{activeDocument.parse_state === "failed" && activeDocument.versions?.find((version) => version.id === activeDocument.latest_version_id) && <button className="link-button reprocess-button" onClick={() => void reprocessVersion(activeDocument.versions!.find((version) => version.id === activeDocument.latest_version_id)!)} disabled={busy}><LoaderCircle size={14} />重新解析</button>}</div>
           <div className="detail-footer">{stateFilter === "active" ? <><button className="danger-outline" onClick={() => void moveToTrash(activeDocument)} disabled={busy}><Trash2 size={15} />移入回收站</button><a className="download-full" href={activeDocument.latest_version_id ? `/api/v1/versions/${activeDocument.latest_version_id}/download` : "#"} aria-disabled={!activeDocument.latest_version_id}><HardDrive size={15} />下载原件</a></> : <><button className="secondary-button" onClick={() => void restoreDocument(activeDocument)} disabled={busy}>恢复文件</button><button className="danger-outline" onClick={() => openDialog({ kind: "permanent", document: activeDocument })} disabled={busy}><Trash2 size={15} />永久删除</button></>}</div>
         </aside>}
       </section>
@@ -564,6 +613,7 @@ export default function Library({
               {(dialog.kind === "tag" || dialog.kind === "edit-tag") && <><label className="dialog-label" htmlFor="dialog-color">标签颜色</label><div className="color-input-row"><input id="dialog-color" type="color" value={dialogColor} onChange={(event) => setDialogColor(event.target.value)} /><span>{dialogColor}</span></div></>}
               {error && <p className="feedback error">{error}</p>}<div className="dialog-actions"><button type="button" className="outline-button" onClick={() => setDialog(null)}>取消</button><button className="primary-button" disabled={busy}>{busy ? "正在保存…" : "保存"}</button></div></form>}
       </section></div>}
+      {previewVersion && <Suspense fallback={<div className="preview-backdrop"><div className="preview-loading"><LoaderCircle className="spin" size={23} />正在加载预览组件</div></div>}><DocumentPreview versionId={previewVersion.id} versionLabel={`v${previewVersion.version_no} · ${previewVersion.original_name}`} onClose={() => setPreviewVersion(null)} /></Suspense>}
     </main>
   );
 }

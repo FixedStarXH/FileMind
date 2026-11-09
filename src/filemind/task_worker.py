@@ -18,13 +18,23 @@ from filemind.models import (
     Blob,
     Document,
     DocumentVersion,
+    ExtractedBlock,
     IdempotencyKey,
     OutboxEvent,
     User,
 )
+from filemind.parsing import PIPELINE_VERSION, ParseFailure, extract_document
 from filemind.storage import blob_path
 
 logger = logging.getLogger("filemind.worker")
+
+
+class TaskCancelled(Exception):
+    pass
+
+
+class LeaseLost(Exception):
+    pass
 
 
 @dataclass(frozen=True)
@@ -33,6 +43,7 @@ class ClaimedTask:
     owner_id: UUID
     kind: str
     resource_id: UUID | None
+    version_id: UUID | None
     attempt: int
     fencing_token: int
 
@@ -75,6 +86,7 @@ def _claim(engine: Engine, task_id: UUID) -> ClaimedTask | None:
             owner_id=task.owner_id,
             kind=task.kind,
             resource_id=task.resource_id,
+            version_id=task.version_id,
             attempt=task.attempt,
             fencing_token=task.fencing_token,
         )
@@ -90,7 +102,7 @@ def _heartbeat_loop(engine: Engine, claimed: ClaimedTask, stop: threading.Event)
                 update(BackgroundTask)
                 .where(
                     BackgroundTask.id == claimed.id,
-                    BackgroundTask.status == "running",
+                    BackgroundTask.status.in_(("running", "cancel_requested")),
                     BackgroundTask.fencing_token == claimed.fencing_token,
                     BackgroundTask.lease_until > now,
                 )
@@ -103,7 +115,7 @@ def _heartbeat_loop(engine: Engine, claimed: ClaimedTask, stop: threading.Event)
             renewed = session.scalar(
                 select(BackgroundTask.id).where(
                     BackgroundTask.id == claimed.id,
-                    BackgroundTask.status == "running",
+                    BackgroundTask.status.in_(("running", "cancel_requested")),
                     BackgroundTask.fencing_token == claimed.fencing_token,
                     BackgroundTask.lease_until > now,
                 )
@@ -272,6 +284,191 @@ def _finish_generic(engine: Engine, claimed: ClaimedTask) -> None:
         task.updated_at = now
 
 
+def _parse_document(engine: Engine, claimed: ClaimedTask) -> None:
+    if claimed.resource_id is None or claimed.version_id is None:
+        raise ParseFailure("INVALID_TASK")
+    settings = get_settings()
+    with Session(engine) as session:
+        row = session.execute(
+            select(DocumentVersion, Blob, Document)
+            .join(
+                Blob,
+                (Blob.id == DocumentVersion.blob_id) & (Blob.owner_id == DocumentVersion.owner_id),
+            )
+            .join(
+                Document,
+                (Document.id == DocumentVersion.document_id)
+                & (Document.owner_id == DocumentVersion.owner_id),
+            )
+            .where(
+                DocumentVersion.id == claimed.version_id,
+                DocumentVersion.document_id == claimed.resource_id,
+                DocumentVersion.owner_id == claimed.owner_id,
+                Document.state == "active",
+                Blob.state == "active",
+            )
+        ).first()
+        if row is None:
+            raise ParseFailure("RESOURCE_UNAVAILABLE")
+        version, blob, _document = row
+        source = blob_path(settings.storage_root, claimed.owner_id, blob.storage_key)
+        suffix = Path(version.original_name).suffix.casefold()
+
+    generation = 1
+
+    def update_stage(stage: str, completed: int, total: int | None) -> None:
+        now = datetime.now(UTC)
+        cancelled = False
+        with Session(engine) as session, session.begin():
+            task = session.scalar(
+                select(BackgroundTask)
+                .where(
+                    BackgroundTask.id == claimed.id,
+                    BackgroundTask.status.in_(("running", "cancel_requested")),
+                    BackgroundTask.fencing_token == claimed.fencing_token,
+                    BackgroundTask.lease_until > now,
+                )
+                .with_for_update()
+            )
+            version_row = session.scalar(
+                select(DocumentVersion)
+                .where(
+                    DocumentVersion.id == claimed.version_id,
+                    DocumentVersion.owner_id == claimed.owner_id,
+                )
+                .with_for_update()
+            )
+            if task is None or version_row is None:
+                raise LeaseLost("task lease lost")
+            if task.cancel_requested or task.status == "cancel_requested":
+                task.status = "cancelled"
+                task.stage = "cancelled"
+                task.lease_until = None
+                task.heartbeat_at = None
+                task.updated_at = now
+                version_row.parse_state = "cancelled"
+                cancelled = True
+            else:
+                task.stage = stage
+                task.progress_completed = completed
+                task.progress_total = total
+                task.updated_at = now
+                version_row.parse_state = "ocr" if stage == "ocr" else "extracting"
+        if cancelled:
+            raise TaskCancelled("task cancelled")
+
+    # A first checkpoint both validates the lease and exposes a useful stage before parsing.
+    update_stage("extracting", 0, None)
+    blocks, page_count = extract_document(source, suffix, settings.max_pdf_pages, update_stage)
+    now = datetime.now(UTC)
+    with Session(engine) as session, session.begin():
+        if not _is_current_lease(session, claimed, now):
+            raise LeaseLost("task lease lost")
+        task = session.get(BackgroundTask, claimed.id)
+        version_row = session.scalar(
+            select(DocumentVersion)
+            .where(
+                DocumentVersion.id == claimed.version_id,
+                DocumentVersion.owner_id == claimed.owner_id,
+            )
+            .with_for_update()
+        )
+        document = session.scalar(
+            select(Document)
+            .where(Document.id == claimed.resource_id, Document.owner_id == claimed.owner_id)
+            .with_for_update()
+        )
+        if task is None or task.cancel_requested or task.status != "running":
+            if task is not None and task.status == "cancel_requested":
+                task.status = "cancelled"
+                task.stage = "cancelled"
+                task.lease_until = None
+                task.heartbeat_at = None
+                task.updated_at = now
+                if version_row is not None:
+                    version_row.parse_state = "cancelled"
+                return
+            raise LeaseLost("task lease lost")
+        if version_row is None or document is None or document.state != "active":
+            raise ParseFailure("RESOURCE_UNAVAILABLE")
+        generation = (version_row.active_generation or 0) + 1
+        session.execute(
+            delete(ExtractedBlock).where(
+                ExtractedBlock.owner_id == claimed.owner_id,
+                ExtractedBlock.version_id == claimed.version_id,
+                ExtractedBlock.generation == generation,
+            )
+        )
+        session.add_all(
+            [
+                ExtractedBlock(
+                    owner_id=claimed.owner_id,
+                    version_id=claimed.version_id,
+                    generation=generation,
+                    ordinal=ordinal,
+                    kind=block.kind,
+                    text=block.text,
+                    locator=block.locator,
+                    ocr_confidence=block.ocr_confidence,
+                )
+                for ordinal, block in enumerate(blocks)
+            ]
+        )
+        version_row.page_count = page_count if page_count > 0 else None
+        version_row.active_generation = generation
+        version_row.pipeline_version = PIPELINE_VERSION
+        version_row.parse_state = "ready"
+        version_row.error_code = None
+        task.status = "succeeded"
+        task.stage = "completed"
+        task.progress_completed = page_count if page_count else len(blocks)
+        task.progress_total = page_count if page_count else len(blocks)
+        task.error_code = None
+        task.lease_until = None
+        task.heartbeat_at = None
+        task.updated_at = now
+
+
+def _finish_parse_failure(engine: Engine, claimed: ClaimedTask, code: str) -> None:
+    now = datetime.now(UTC)
+    with Session(engine) as session, session.begin():
+        task = session.scalar(
+            select(BackgroundTask)
+            .where(
+                BackgroundTask.id == claimed.id,
+                BackgroundTask.status.in_(("running", "cancel_requested")),
+                BackgroundTask.fencing_token == claimed.fencing_token,
+            )
+            .with_for_update()
+        )
+        if task is None:
+            return
+        if task.cancel_requested or task.status == "cancel_requested":
+            task.status = "cancelled"
+            task.stage = "cancelled"
+            version_state = "cancelled"
+        else:
+            task.status = "failed"
+            task.stage = "failed"
+            task.error_code = code
+            version_state = "failed"
+        task.lease_until = None
+        task.heartbeat_at = None
+        task.updated_at = now
+        if claimed.version_id:
+            version = session.scalar(
+                select(DocumentVersion)
+                .where(
+                    DocumentVersion.id == claimed.version_id,
+                    DocumentVersion.owner_id == claimed.owner_id,
+                )
+                .with_for_update()
+            )
+            if version is not None:
+                version.parse_state = version_state
+                version.error_code = code if version_state == "failed" else None
+
+
 def _fail_or_retry(engine: Engine, claimed: ClaimedTask) -> None:
     now = datetime.now(UTC)
     with Session(engine) as session, session.begin():
@@ -293,9 +490,32 @@ def _fail_or_retry(engine: Engine, claimed: ClaimedTask) -> None:
         if task.attempt >= 3:
             task.status = "failed"
             task.stage = "failed"
+            if claimed.version_id:
+                version = session.scalar(
+                    select(DocumentVersion)
+                    .where(
+                        DocumentVersion.id == claimed.version_id,
+                        DocumentVersion.owner_id == claimed.owner_id,
+                    )
+                    .with_for_update()
+                )
+                if version is not None:
+                    version.parse_state = "failed"
+                    version.error_code = task.error_code
             return
         task.status = "queued"
         task.stage = "retry_wait"
+        if claimed.version_id:
+            version = session.scalar(
+                select(DocumentVersion)
+                .where(
+                    DocumentVersion.id == claimed.version_id,
+                    DocumentVersion.owner_id == claimed.owner_id,
+                )
+                .with_for_update()
+            )
+            if version is not None:
+                version.parse_state = "queued"
         task.dispatch_seq += 1
         delay = min(60, 2**task.attempt)
         due = now + timedelta(seconds=delay)
@@ -328,8 +548,17 @@ def execute_task(task_id: str) -> None:
         try:
             if claimed.kind == "document_purge":
                 _purge_document(engine, claimed)
+            elif claimed.kind == "parse":
+                _parse_document(engine, claimed)
             else:
                 raise ValueError("task handler is not available")
+        except ParseFailure as exc:
+            logger.warning("document parse failed task_id=%s code=%s", claimed.id, exc.code)
+            _finish_parse_failure(engine, claimed, exc.code)
+        except TaskCancelled:
+            logger.info("task cancelled task_id=%s", claimed.id)
+        except LeaseLost:
+            logger.warning("task lease lost task_id=%s", claimed.id)
         except Exception:
             logger.error("task execution failed task_id=%s kind=%s", claimed.id, claimed.kind)
             _fail_or_retry(engine, claimed)

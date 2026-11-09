@@ -1,0 +1,37 @@
+.version-row .download-button{cursor:pointer}
+.reprocess-button{display:inline-flex;align-items:center;gap:6px;margin-top:8px}
+.preview-backdrop{position:fixed;inset:0;z-index:30;display:grid;place-items:center;padding:20px;background:#17221bd1;backdrop-filter:blur(5px)}
+.preview-dialog{width:min(1180px,96vw);height:min(850px,94vh);display:flex;flex-direction:column;overflow:hidden;border:1px solid #dfe5dc;border-radius:10px;background:#f8faf6;box-shadow:0 24px 90px #0c161052}
+.preview-header{min-height:68px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px 20px;border-bottom:1px solid #e0e6dd;background:#fffefa}
+.preview-header h2{margin:4px 0 0;color:#303b32;font-family:var(--serif);font-size:20px;font-weight:500}
+.preview-header-actions{display:flex;align-items:center;gap:10px}
+.preview-header .download-full{min-height:32px}
+.preview-body{min-height:0;flex:1;display:grid;grid-template-columns:minmax(0,1fr) 330px;overflow:hidden}
+.preview-body.has-visual{grid-template-columns:minmax(0,1fr) 315px}
+.preview-block-list{min-width:0;overflow:auto;padding:12px;border-left:1px solid #e1e6df;background:#fbfcf9}
+.preview-block{width:100%;display:block;margin:0 0 8px;padding:11px 12px;border:1px solid #e5e9e2;border-radius:6px;background:#fffefa;color:#354137;text-align:left;cursor:pointer}
+.preview-block:hover,.preview-block.is-selected{border-color:#9bac99;background:#f0f5ed}
+.preview-block>span{display:block;color:#728074;font-size:10px}
+.preview-block>span small{color:#a0854e;font-size:9px}
+.preview-block p{margin:7px 0 0;font-size:12px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}
+.preview-more{padding:8px;color:#8a938a;font-size:10px;line-height:1.6}
+.preview-warning,.preview-error{display:flex;align-items:center;gap:8px;margin:10px 16px 0;padding:9px 11px;border-radius:5px;background:#f8f0e2;color:#876b35;font-size:11px}
+.preview-error{background:#faece9;color:#964d41}
+.preview-loading,.preview-empty{min-height:150px;display:flex;align-items:center;justify-content:center;gap:9px;padding:24px;color:#8b948b;font-size:12px}
+.preview-loading{flex:1}
+.pdf-stage,.image-stage{min-width:0;min-height:0;display:flex;flex-direction:column;overflow:auto;background:#e9ede7}
+.pdf-controls{position:sticky;top:0;z-index:2;min-height:44px;display:flex;align-items:center;justify-content:center;gap:8px;padding:5px 10px;border-bottom:1px solid #dce2d9;background:#f7f9f5ed;backdrop-filter:blur(8px)}
+.pdf-controls .outline-button{min-height:29px;padding:0 8px;font-size:10px}
+.pdf-controls>span{min-width:84px;color:#6f796f;text-align:center;font-size:10px}
+.zoom-button{width:27px;height:27px;border:1px solid #dfe4dc;border-radius:4px;background:#fffefa;color:#657167;font-size:17px;line-height:1}
+.pdf-page-wrap{display:flex;justify-content:center;align-items:flex-start;padding:22px}
+.pdf-page{position:relative;flex:none;background:white;box-shadow:0 4px 20px #17221b21}
+.pdf-page canvas{display:block}
+.ocr-overlay{position:absolute;z-index:1;padding:0;border:1px solid #e5a64da6;border-radius:2px;background:#f8cb6440;cursor:pointer}
+.ocr-overlay:hover,.ocr-overlay.is-selected{border:2px solid #a36e23;background:#f4bb4c66}
+.image-stage{align-items:center;justify-content:flex-start;padding:25px;overflow:auto}
+.image-canvas{position:relative;width:fit-content;max-width:100%;margin:auto}
+.image-canvas img{display:block;max-width:100%;max-height:calc(94vh - 130px);object-fit:contain;box-shadow:0 4px 20px #17221b21}
+.image-canvas .ocr-overlay{position:absolute}
+@media (max-width:900px){.preview-body,.preview-body.has-visual{grid-template-columns:minmax(0,1fr) 260px}}
+@media (max-width:680px){.preview-backdrop{padding:0}.preview-dialog{width:100vw;height:100dvh;max-height:100dvh;border-radius:0}.preview-header{min-height:60px;padding:10px 13px}.preview-header h2{font-size:18px}.preview-header .download-full{width:34px;min-width:34px;padding:0;font-size:0}.preview-body,.preview-body.has-visual{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(260px,1fr) 36vh}.preview-block-list{border-top:1px solid #e1e6df;border-left:0}.pdf-page-wrap{justify-content:flex-start;padding:14px}.pdf-controls{justify-content:flex-start;overflow:auto}.image-stage{padding:14px}}

@@ -130,6 +130,7 @@ async def cancel_task(
             )
             if version is not None:
                 version.parse_state = "cancelled"
+                version.error_code = None
     elif task.status == "running":
         task.status = "cancel_requested"
         task.cancel_requested = True

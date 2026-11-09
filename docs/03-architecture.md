@@ -29,18 +29,18 @@ flowchart LR
 1. 校验账户与容量 → 流式写临时文件、限制大小并计算 SHA-256。M2 锁定用户额度行并在元数据事务中记账；M3 异步任务再使用额度预留。
 2. 检查魔数、MIME、容器结构；将 blob 原子改名到随机存储键；事务创建 document/version。M2 同步写入且标记 `not_started`；M3 起再在同一事务创建 task/outbox。事务失败会回滚元数据、恢复/移除文件；孤儿文件由清理器回收。
 3. 上传事务同时创建 task/outbox；dispatcher 发布 task_id 到 Celery，数据库 outbox 记录投递；发布和标记不是原子操作，允许重复消息。M3 parse task 暂停在 `waiting_parser`，M4 启用 ingestion Worker 后再发布。
-4. worker CAS 领取任务租约 → 提取页面/块 → 必要时 OCR → 分段 → 生成本地向量与关键词索引。
-5. 在新 generation 中写入片段，完成后事务切换 version 的 active_generation 与 index_mode；首次上传或显式新版本上传同时切换 document 的 current_version。对已有版本重建索引时不改变 current_version。向量模型暂不可用时可激活完整的关键词索引并标记 keyword_only；提取或OCR失败则保留旧 generation，不展示半套索引。
+4. M4 ingestion worker CAS 领取任务租约 → 提取 PDF、Office、文本或图片内容 → 对扫描 PDF/图片运行本地 OCR → 写入带 locator 的 extracted_blocks。任务与版本状态记录提取/OCR 阶段；取消与提交前检查租约及 fencing token。
+5. M5 从 extracted_blocks 读取已解析内容，在新 generation 写入 chunks、关键词与向量索引；完成后事务切换 version 的 active_generation/index_mode，并在可检索时激活 document 的 current_version。对已有版本重建索引时不改变 current_version。向量模型暂不可用时可激活完整关键词索引并标记 keyword_only；索引失败则保留旧 generation，不展示半套索引。
 6. 保存任务终态和事件；API 从数据库提供进度，浏览器以 SSE 跟进。
 
-M2 上传的 HTTP 201 表示原始文件与资料元数据已同步落库，解析状态为 `not_started`。M3 起上传返回202并原子创建 parse task/outbox；M3 的任务停在 `waiting_parser`，直到 M4 启用解析 Worker。202 只表示已接收，不代表解析完成。前端“可检索”只在索引激活后显示。
+M2 上传的 HTTP 201 表示原始文件与资料元数据已同步落库，解析状态为 `not_started`。M3 起上传返回202并原子创建 parse task/outbox；M4 打开 ingestion worker 后投递并保存解析结果。202 只表示已接收，不代表解析完成。M4 `ready` 表示结构化提取完成；仍须等 M5 激活索引后才可检索和切换 `current_version`。
 
 ## 3. 状态机
 
 | 对象 | 状态及转换 |
 |---|---|
 | 文件 | active → trashed → active 或 purging → purged；回收站到期触发 purging |
-| 版本解析 | queued → extracting → ocr（可跳过）→ indexing → ready；运行中可转 failed/cancelled |
+| 版本解析 | queued → extracting → ocr（可跳过）→ ready；运行中可转 failed/cancelled；M5 索引作为后续独立阶段 |
 | 普通任务 | queued → running → succeeded/failed/cancelled；running 可进入 cancel_requested；重试创建新任务 |
 | Agent run | queued → running → waiting_approval → queued → running → succeeded；可转 failed/cancelled/expired |
 | 审批 | pending → approved/rejected/expired；approved 的执行结果另记 applied/failed |
@@ -55,7 +55,7 @@ M2 上传的 HTTP 201 表示原始文件与资料元数据已同步落库，解�
 - 每个阶段以 `(version_id, pipeline_version, stage, generation)` 判重；最终激活操作在事务里完成。
 - 模型调用重试可能产生额外费用；记录 provider request ID 和 attempt，不能声称第三方调用恰好一次。
 - 可恢复异常最多重试 3 次，指数退避加 jitter；损坏文件、参数校验错误不自动重试。
-- 取消是协作式：DB 置 cancel_requested，worker 在阶段边界和提交前检查；OCR 子进程超时可终止。终态成功后取消返回 409，不能回滚已提交结果。
+- 取消是协作式：DB 置 cancel_requested，worker 在页/阶段边界和提交前检查；OCR 在单个页面调用内完成后响应取消。上传大小、页数和栅格像素限制资源消耗；强制终止异常 worker 由 Celery worker 回收。终态成功后取消返回 409，不能回滚已提交结果。
 - 定时恢复器每分钟扫描租约过期/待投递任务；重复恢复靠唯一键和 CAS 抑制。
 
 ## 5. 文件写操作与导出

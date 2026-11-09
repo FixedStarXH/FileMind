@@ -41,10 +41,10 @@
 | DELETE /documents/{id}/permanent | `{confirm_title}`，仅回收站文件；Idempotency-Key | M3 202 `{task}`；文件立即转为 purging 并禁止访问 |
 | GET /documents/{id}/versions | — | 200 列表 |
 | POST /documents/{id}/versions | multipart `file` + If-Match + Idempotency-Key | M3 202 `{document,version,task}` |
-| GET /versions/{id}/preview | `{kind?,page?}` 为 query | 200 `{kind,blocks,page_count}`；PDF/图片二进制由 content 接口读取 |
-| GET /versions/{id}/content | inline PDF/图片；鉴权，支持 Range | 200/206 bytes |
+| GET /versions/{id}/preview | `page?`、`offset?`、`limit?`（1–1000） | 200 `{kind,parse_state,error_code?,blocks,page_count,generation,warnings,offset,has_more}`；按 PDF 页码/PPTX 幻灯片筛选 |
+| GET /versions/{id}/content | 仅 PDF/图片 inline；鉴权、单 Range | 200/206 bytes，私有 no-store |
 | GET /versions/{id}/download | 原文件附件下载 | 200/206 bytes |
-| POST /versions/{id}/reprocess | `{}`，无并行解析 | 202 `{task_id}` |
+| POST /versions/{id}/reprocess | `{}`；不允许同版本并行解析 | 202 `{task}` |
 | POST /search | SearchRequest | 200 `{hits,degraded,retrieval_version}` |
 | POST /conversations | `{title?,scope}` | 201 conversation |
 | GET /conversations | 游标 | 200 列表 |
@@ -83,7 +83,7 @@
 
 任务重试补充规则：`/tasks/{id}/retry` 只用于失败/取消且原资源仍可用的解析任务，或仍处于 purging 的永久删除任务；返回同一失败任务的重复 retry 会重放已创建的子任务。不可取消的永久删除任务返回409。Agent任务返回409 `RESTART_AGENT_REQUIRED`，前端通过创建新run重新生成方案并重新审批。自动恢复尚未终结的Agent run使用原checkpoint及已记录审批，只能继续同一plan，已应用动作不得重复执行。审批执行失败后不能将原批准用于新方案。
 
-回收站文件允许所有者通过版本预览/下载接口访问，文件详情响应携带trashed状态；搜索和Agent工具仍排除。包含回收站文件的历史回答只显示“来源已移入回收站”并隐藏原文片段，恢复后可再次定位；相关导出包立即失效。purging/purged状态禁止内容访问。加密文件若在接收检查时识别，返回422；异步解析才发现则task.error=ENCRYPTED_DOCUMENT，文件仍可下载。
+回收站文件允许所有者通过版本预览/下载接口访问，文件详情响应携带trashed状态；搜索和Agent工具仍排除。包含回收站文件的历史回答只显示“来源已移入回收站”并隐藏原文片段，恢复后可再次定位；相关导出包立即失效。purging/purged状态禁止内容访问。Office 加密文件若在接收检查时识别，返回422 `ENCRYPTED_DOCUMENT`；加密 PDF 在异步解析时失败为 `ENCRYPTED_PDF`，文件仍可下载。
 
 **Scope**：`{"document_ids":["uuid"],"folder_ids":[],"tag_ids":[],"inbox":false,"all_documents":false}`。各选择器按并集确定范围并去重；inbox=true 选择 folder_id=null 的未归档文件；all_documents=true 时其他选择器和 inbox 必须为空/false。默认禁止隐式全库；搜索和问答可显式选择全库，按授权索引检索，结果证据固定版本；整理和资料包必须指定有限范围并在 run 开始时展开至最多100文件，超出返回422 SCOPE_TOO_LARGE。文件夹包含后代文件夹。
 
@@ -91,7 +91,7 @@
 
 搜索 scope 必须显式指定至少一个选择器，或 `all_documents=true`；仅文件名查询请用 `/documents?q=`。问答的 scope 在 run 创建时确定，后续追问可重新选择范围，但每个 run 都保存独立的范围快照。
 
-**Locator** 是判别联合：`{type:"pdf_page",page:1,bbox?:[0,0,1,1]}` / `{type:"paragraph",paragraph:12}` / `{type:"slide",slide:3}` / `{type:"lines",start:1,end:8}` / `{type:"image",bbox:[...]}`。编号从1开始，坐标归一化到已校正方向的页面/图片。
+**Locator** 是判别联合：M4 提取块使用 `{page:1,source:"native"|"ocr",bbox?:[left,top,right,bottom]}`、`{paragraph:12}`、`{table:1,row:2,column:3}`、`{slide:3,shape:2,paragraph:1}`、`{line:8}` 或 `{source:"ocr",bbox:[...],width:1400,height:900}`。PDF OCR bbox 单位为 PDF 页面点，图片 bbox 为应用 EXIF 方向校正后的像素；段落、表格、幻灯片、行和页码从1开始。M5 chunk locator 归一到统一引用 schema。
 
 **RunRequest** 示例：
 
@@ -151,4 +151,4 @@ data: {"run_id":"uuid","seq":18,"text":"根据课件……"}
 | 429 | RATE_LIMITED / RUN_BUDGET_EXCEEDED | 等待 Retry-After 或缩小范围 |
 | 503 | AI_NOT_CONFIGURED / MODEL_UNAVAILABLE / SEARCH_UNAVAILABLE | 显示不可用，不伪造结果 |
 
-异步解析错误出现在 task.error，例如 CORRUPT_DOCUMENT、PAGE_LIMIT_EXCEEDED、OCR_TIMEOUT、EMBEDDING_FAILED。日志保存 request_id，响应不返回堆栈、绝对路径或 Key。
+M4 解析失败时 `tasks.error_code` 和 `document_versions.error_code` 写入稳定错误码，例如 `CORRUPT_DOCUMENT`、`ENCRYPTED_PDF`、`PAGE_LIMIT_EXCEEDED`、`PDF_PAGE_PIXEL_LIMIT_EXCEEDED`、`IMAGE_PIXEL_LIMIT_EXCEEDED`、`OCR_UNAVAILABLE`、`OCR_FAILED`。M4 不声明 OCR 单页硬超时；任务限制文件大小、PDF 页数及渲染/图片像素，运维可回收异常 worker。M5 的 `EMBEDDING_FAILED` 另行定义。日志保存 request_id，响应不返回堆栈、绝对路径或 Key。

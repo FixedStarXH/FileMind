@@ -2,9 +2,9 @@
 
 ## 1. 运行拓扑
 
-Windows 开发机使用 Docker Desktop/WSL2 的 Linux 容器；浏览器用 Edge。正式部署为单台 Linux 主机 + Docker Compose，前端与 API 同源。M0 已提供 API、PostgreSQL、Redis 的基础 Compose；Nginx、worker、dispatcher、scheduler 将在后续模块加入。
+Windows 开发机使用 Docker Desktop/WSL2 的 Linux 容器；浏览器用 Edge。正式部署为单台 Linux 主机 + Docker Compose，前端与 API 同源。M4 Compose 启动独立 ingestion worker；Nginx、Agent/export worker 和 scheduler 在后续模块加入。
 
-服务：nginx、api、worker-ingest、worker-agent、worker-export、worker-maintenance、dispatcher、postgres、redis。M3 增加迁移、dispatcher 和 maintenance worker；parse task 留在数据库直到 M4 的 ingestion worker 上线。worker 使用同一 backend 镜像与不同启动参数；OCR/embedding 权重放只读模型缓存，业务文件放共享持久卷。API 与 worker 以非 root 用户运行。
+服务：nginx、api、worker-ingestion、worker-agent、worker-export、worker-maintenance、dispatcher、postgres、redis、migrate。M4 启用 ingestion 队列；ingestion worker 单并发、3 GiB 内存限制、业务文件卷只读。RapidOCR 和其 Apache-2.0 OCR 模型随锁定 Python 包安装，推理不需要外网；`MODEL_CACHE_DIR` 留给后续向量模型。API 与 worker 以非 root 用户运行。
 
 默认 OCR 并发1、Agent并发2、导出并发1；API数据库池5+overflow5，worker每进程独立小池。参考资源4核8GiB，推荐开发机为容器预留至少8GiB，首次安装和大PDF需实测内存，不能把参考配置当保证。
 
@@ -16,7 +16,7 @@ M0 已确认 Docker 可用，但尚未验证 OCR 与向量模型的峰值内存�
 
 配置见根目录 `.env.example`；空 Key 可启动基础功能，`AI_ENABLED` 不替代每用户的 ai_enabled 授权。DB/Redis凭据和SESSION_SECRET必须由部署者生成，示例不提供可投入生产的默认密码。
 
-实施后预期流程：检查Docker/WSL → 复制配置并生成本地秘密 → 预下载模型并验证revision/校验和 → 构建锁定依赖的镜像 → 启动数据库 → Alembic/checkpointer迁移 → 管理员命令创建账户 → 启动服务 → 运行冒烟验证。模型下载失败时显示明确状态，不能启动后悄悄在首个请求下载。
+实施后流程：检查Docker/WSL → 复制配置并生成本地秘密 → 构建锁定依赖的镜像 → 启动数据库和 Alembic 迁移 → 管理员命令创建账户 → 启动服务 → 检查 OCR worker 与健康状态。M4 OCR 模型随 Python wheel 安装；向量模型在 M5 另行准备并校验 revision/校验和。
 
 `.env.example` 是设计期配置名规范，实际代码必须逐项接入并校验；禁止不生效的配置留在正式发布模板。密钥不进入前端构建变量。
 
