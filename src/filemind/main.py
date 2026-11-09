@@ -6,11 +6,14 @@ from typing import cast
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from filemind.config import get_settings
+from filemind.routes_auth import router as account_router
 
 
 @asynccontextmanager
@@ -33,6 +36,7 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+app.include_router(account_router)
 
 
 @app.middleware("http")
@@ -57,6 +61,33 @@ async def handle_unexpected_error(request: Request, _exc: Exception) -> JSONResp
                 "message": "服务暂时无法处理请求",
                 "details": {},
             },
+            "request_id": request_id,
+        },
+        headers={"X-Request-ID": request_id},
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def handle_http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", str(uuid4()))
+    code = str(exc.detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": {"code": code, "message": code, "details": {}},
+            "request_id": request_id,
+        },
+        headers={"X-Request-ID": request_id, **(exc.headers or {})},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def handle_validation_error(request: Request, _exc: RequestValidationError) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", str(uuid4()))
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": {"code": "VALIDATION_ERROR", "message": "请求参数无效", "details": {}},
             "request_id": request_id,
         },
         headers={"X-Request-ID": request_id},

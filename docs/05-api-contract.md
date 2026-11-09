@@ -1,6 +1,6 @@
 # 05 HTTP 接口契约
 
-设计版本 v1；前缀 `/api/v1`。实现后由 FastAPI 生成 OpenAPI，并提交 schema 快照进行变更校验。本文件是当前开发契约；未声称已有可运行接口。
+设计版本 v1；前缀 `/api/v1`。M1 已实现账户、会话和设置端点；其他接口仍是后续模块契约。FastAPI OpenAPI 会随实现逐模块校验。
 
 ## 1. 通用约定
 
@@ -66,6 +66,8 @@
 | GET /audit-events | resource_id?,cursor? | 200 列表 |
 
 `GET /health/live` 只检测进程；`GET /health/ready` 检测 DB、broker、文件卷可用，不返回密钥。DeepSeek 缺 Key 不影响基础 readiness；capabilities 表明哪些功能可用。
+
+账户仅由管理员 CLI 创建，不开放公开注册。初始化命令为 `filemind create-user <email>`；密码通过交互提示输入两次，不作为命令行参数保存。写接口要求会话 Cookie、CSRF header 和精确匹配 `APP_ORIGIN` 的 Origin。M1 登录限流按邮箱与客户端 IP 分别计数，15分钟最多10次/邮箱、30次/IP；Redis 不可用时拒绝登录。
 
 ## 3. 核心模型
 

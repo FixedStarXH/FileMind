@@ -6,6 +6,8 @@ readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "alembic>=1.17,<2",
+    "argon2-cffi>=25.1,<26",
+    "email-validator>=2.3,<3",
     "fastapi>=0.127,<0.128",
     "pydantic-settings>=2.12,<3",
     "uvicorn[standard]>=0.38,<1",
@@ -26,6 +28,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/filemind"]
+
+[project.scripts]
+filemind = "filemind.cli:main"
 
 [tool.ruff]
 line-length = 100

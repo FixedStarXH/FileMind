@@ -1,6 +1,6 @@
 # 04 数据库逻辑设计
 
-PostgreSQL 17，时区 UTC。ID 使用 UUID；时间 timestamptz；业务字节数 bigint；所有用户数据带 owner_id。下列是迁移实现依据，不是已执行 DDL。
+PostgreSQL 17，时区 UTC。ID 使用 UUID；时间 timestamptz；业务字节数 bigint；所有用户数据带 owner_id。M1 已迁移 `users` 与 `sessions`；其他表仍是后续迁移的设计依据。
 
 ## 1. 表结构
 

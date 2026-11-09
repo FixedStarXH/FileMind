@@ -6,7 +6,9 @@ __pycache__/
 .uv-cache/
 .python/
 node_modules/
+.npm-cache/
 dist/
+*.tsbuildinfo
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

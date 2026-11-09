@@ -16,10 +16,12 @@ class Settings(BaseSettings):
     )
 
     app_env: str = "development"
-    app_origin: str = "http://localhost:8080"
+    app_origin: str = "http://127.0.0.1:5173"
     database_url: str | None = None
     redis_url: str | None = None
     session_secret: SecretStr | None = None
+    session_cookie_name: str = "filemind_session"
+    session_ttl_days: int = 7
     storage_root: Path = Path("./data/files")
     model_cache_dir: Path = Path("./data/models")
 
@@ -85,6 +87,10 @@ class Settings(BaseSettings):
     @property
     def has_deepseek_key(self) -> bool:
         return bool(self.deepseek_api_key and self.deepseek_api_key.get_secret_value().strip())
+
+    @property
+    def has_session_secret(self) -> bool:
+        return bool(self.session_secret and self.session_secret.get_secret_value().strip())
 
 
 @lru_cache(maxsize=1)
