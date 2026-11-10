@@ -18,6 +18,7 @@
 | M10（已完成） | 部署、恢复演练、演示数据、说明书 | M9 | 生产前端容器与健康代理通过；隔离 Compose 项目完成数据库/文件卷恢复冒烟，Age 加密脚本限制见 `docs/24-m10-validation.md`；`docs: deliver deployment and demo guide` |
 | M11（已完成） | 网页自助注册与多人独立使用 | M10 | Edge 页面注册后自动登录、双账户独立会话、重复邮箱与来源校验；验证记录见 `docs/26-m11-validation.md`；`feat: enable self-service account registration` |
 | M12（已完成） | 多格式文档预览阅读体验 | M11 | Edge 实际预览 PDF、DOCX、PPTX、TXT、PNG、JPEG 及手机视口；长文本加载后续内容；验证记录见 `docs/27-preview-validation.md`；`feat: improve multi-format document preview` |
+| M13（已完成） | PPTX 幻灯片内嵌图片预览 | M12 | 图片/文字位置、双页图片、私有图片访问和 Edge 页面验收；验证记录见 `docs/28-pptx-media-validation.md`；`feat: preview embedded slide images` |
 
 前端随M1–M8逐模块交付，不把所有页面拖到最后。M1做登录，M2做资料库，M3任务中心，M4预览，M5搜索，M6对话，M7审批，M8资料包。
 

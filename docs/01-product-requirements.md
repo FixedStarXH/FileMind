@@ -31,7 +31,7 @@
 |---|---|---|
 | PDF | pypdf 提取；少于30个可见字符的页面渲染后 OCR | PDF.js；页码，OCR 框可高亮，原生文本按页定位 |
 | DOCX | python-docx，段落/表格提取 | 安全渲染的段落视图；段落编号，不承诺 Word 原样排版 |
-| PPTX | python-pptx，提取幻灯片文本 | 幻灯片文本卡片；幻灯片编号，图片中的文字首版不识别 |
+| PPTX | python-pptx，提取幻灯片文本与嵌入图片 | 按页展示图片与文字的近似布局；幻灯片编号，嵌入图片中的文字不识别 |
 | TXT/MD | UTF-8，UTF-8 BOM；其他编码提示转换 | 转义文本/清洗后的 Markdown；行号 |
 | PNG/JPEG | RapidOCR，校正 EXIF 方向 | 图片与 OCR 框坐标；展示识别质量提示 |
 

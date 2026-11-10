@@ -25,10 +25,25 @@ type PreviewData = {
   warnings: string[];
   blocks: PreviewBlock[];
   has_more: boolean;
+  slide?: {
+    width: number;
+    height: number;
+    elements: Array<{
+      kind: "image" | "text";
+      shape_id: number;
+      text?: string;
+      truncated?: boolean;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }>;
+    omitted_images: number;
+  } | null;
 };
 
 const kindLabel: Record<PreviewData["kind"], string> = {
-  pdf: "PDF 原文", image: "图片原文", docx: "Word 文本", pptx: "幻灯片文本",
+  pdf: "PDF 原文", image: "图片原文", docx: "Word 文本", pptx: "幻灯片内容",
   text: "纯文本", unknown: "暂不支持预览",
 };
 
@@ -226,6 +241,7 @@ export default function DocumentPreview({
         : !data ? <div className="preview-empty">没有可显示的预览内容，请下载原件。</div>
           : <>
             {data.warnings.includes("OCR_LOW_CONFIDENCE") && <div className="preview-warning"><AlertTriangle size={16} />部分文字识别置信度较低，请对照原图核验。</div>}
+            {data.warnings.includes("SLIDE_MEDIA_UNAVAILABLE") && <div className="preview-warning"><AlertTriangle size={16} />幻灯片图片暂时无法读取，可下载原件查看。</div>}
             {data.parse_state !== "ready" && <div className="preview-warning">{data.error_code ? `解析失败：${data.error_code}。` : `当前状态：${data.parse_state}。`}仍可查看原件或下载，文字将在解析完成后出现。</div>}
             <div className={`preview-body ${visual ? "has-visual" : "is-textual"}`}>
               {data.kind === "pdf" && <div className="pdf-stage">
@@ -251,15 +267,27 @@ export default function DocumentPreview({
                 {moreButton}
               </aside>}
               {!visual && <div className="reader-stage" role="region" aria-label="文件内容">
-                <div className="reader-toolbar"><div><span className="reader-kind">{kindLabel[data.kind]}</span><span className="reader-note">{data.kind === "docx" || data.kind === "pptx" ? "提取文本视图 · 排版可能与原文件不同" : data.kind === "text" ? "按原始行号阅读" : ""}</span></div>{data.kind === "pptx" && pageControls}</div>
+                <div className="reader-toolbar"><div><span className="reader-kind">{kindLabel[data.kind]}</span><span className="reader-note">{data.kind === "pptx" ? "图片和文字按幻灯片位置近似展示" : data.kind === "docx" ? "提取文本视图 · 排版可能与原文件不同" : data.kind === "text" ? "按原始行号阅读" : ""}</span></div>{data.kind === "pptx" && pageControls}</div>
                 <div className={`reader-scroll ${data.kind === "pptx" ? "is-slides" : ""}`}>
                   {data.kind === "unknown" ? <div className="preview-empty">此类型暂不支持在线预览，请下载原件。</div>
                     : <div className={`reader-paper reader-${data.kind}`}>
                       {data.kind === "pptx" && <div className="slide-caption"><span>幻灯片 {page}</span><small>第 {page} / {pageLimit} 张</small></div>}
+                      {data.kind === "pptx" && !pageLoading && data.slide && <>
+                        <div className="slide-layout" style={{ aspectRatio: `${data.slide.width} / ${data.slide.height}` }} aria-label={`第 ${page} 张幻灯片的图片与文字`}>
+                          {data.slide.elements.map((element, index) => {
+                            const position = { left: `${element.x * 100}%`, top: `${element.y * 100}%`, width: `${element.width * 100}%`, height: `${element.height * 100}%`, zIndex: index + 1 };
+                            return element.kind === "image"
+                              ? <a key={element.shape_id} className="slide-layout-image" style={position} href={`/api/v1/versions/${versionId}/slides/${page}/images/${element.shape_id}`} target="_blank" rel="noopener noreferrer" aria-label={`单独查看第 ${page} 张幻灯片中的第 ${index + 1} 个图片`} title="点击单独查看图片"><img src={`/api/v1/versions/${versionId}/slides/${page}/images/${element.shape_id}`} alt={`第 ${page} 张幻灯片中的嵌入图片 ${index + 1}`} loading="lazy" /></a>
+                              : <div key={element.shape_id} className="slide-layout-text" style={position} title={element.truncated ? "文字过长，完整内容见下方" : undefined}>{element.text}</div>;
+                          })}
+                        </div>
+                        {data.slide.omitted_images > 0 && <p className="slide-media-warning">有 {data.slide.omitted_images} 张图片因格式或尺寸限制未显示，请下载原件查看。</p>}
+                        <div className="slide-extracted-heading">本页提取文字</div>
+                      </>}
                       {pageLoading ? <div className="preview-loading"><LoaderCircle className="spin" size={18} />正在读取内容</div>
                         : data.blocks.length ? data.blocks.map((block) => data.kind === "text" ? <div id={`preview-block-${block.id}`} key={block.id} className="reader-line"><span className="reader-line-number">{block.locator.line}</span><span className={markdown && /^#{1,6}\s/.test(block.text) ? "reader-markdown-heading" : "reader-line-text"}>{markdown ? block.text.replace(/^#{1,6}\s+/, "") : block.text}</span></div>
                           : <article id={`preview-block-${block.id}`} key={block.id} className={`reader-content-block ${block.kind.includes("table") ? "is-table-cell" : ""}`}><span className="reader-location">{locatorLabel(block)}</span><p>{block.text}</p></article>)
-                          : <div className="preview-empty">{emptyText}</div>}
+                          : <div className="preview-empty">{data.kind === "pptx" && data.slide?.elements.some((element) => element.kind === "image") ? "本页没有提取到文字，可查看上方图片。" : emptyText}</div>}
                       {moreButton}
                     </div>}
                 </div>

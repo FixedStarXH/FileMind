@@ -42,7 +42,8 @@
 | DELETE /documents/{id}/permanent | `{confirm_title}`，仅回收站文件；Idempotency-Key | M3 202 `{task}`；文件立即转为 purging 并禁止访问 |
 | GET /documents/{id}/versions | — | 200 列表 |
 | POST /documents/{id}/versions | multipart `file` + If-Match + Idempotency-Key | M3 202 `{document,version,task}` |
-| GET /versions/{id}/preview | `page?`、`offset?`、`limit?`（1–1000） | 200 `{kind,parse_state,error_code?,blocks,page_count,generation,warnings,offset,has_more}`；按 PDF 页码/PPTX 幻灯片筛选 |
+| GET /versions/{id}/preview | `page?`、`offset?`、`limit?`（1–1000） | 200 `{kind,parse_state,error_code?,blocks,page_count,generation,warnings,offset,has_more,slide?}`；PPTX 传 `page` 时返回该页图片/文字位置 |
+| GET /versions/{id}/slides/{slide}/images/{shape_id} | Cookie；仅 PPTX 已验证的图片形状 | 200 image/png；仅本人可访问，预览图最长边缩至 2048 像素 |
 | GET /versions/{id}/content | 仅 PDF/图片 inline；鉴权、单 Range | 200/206 bytes，私有 no-store |
 | GET /versions/{id}/download | 原文件附件下载 | 200/206 bytes |
 | POST /versions/{id}/reprocess | `{}`；不允许同版本并行解析 | 202 `{task}` |

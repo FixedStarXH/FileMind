@@ -1,4 +1,4 @@
-"""Authenticated structured previews and inline PDF/image content."""
+"""Authenticated structured previews and inline PDF, image, and slide content."""
 
 from collections.abc import Iterator
 from typing import Annotated
@@ -8,11 +8,13 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, R
 from fastapi.responses import StreamingResponse
 from sqlalchemy import false, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from filemind.auth import Auth, WriteAuth
 from filemind.config import get_settings
 from filemind.database import get_db
 from filemind.models import BackgroundTask, Blob, Document, DocumentVersion, ExtractedBlock
+from filemind.slide_preview import slide_image_png, slide_layout
 from filemind.storage import blob_path
 from filemind.task_contracts import enqueue_task, task_payload
 
@@ -141,6 +143,17 @@ async def preview_version(
     low_confidence = any(
         block.ocr_confidence is not None and block.ocr_confidence < 0.55 for block in blocks
     )
+    slide: dict[str, object] | None = None
+    slide_warning = False
+    if kind == "pptx" and page is not None and offset == 0:
+        path = blob_path(get_settings().storage_root, auth[0].id, blob.storage_key)
+        if path.is_file():
+            try:
+                slide = await run_in_threadpool(slide_layout, path, page)
+            except Exception:
+                slide_warning = True
+        else:
+            slide_warning = True
     return {
         "data": {
             "kind": kind,
@@ -148,7 +161,9 @@ async def preview_version(
             "error_code": version.error_code,
             "page_count": version.page_count,
             "generation": generation,
-            "warnings": ["OCR_LOW_CONFIDENCE"] if low_confidence else [],
+            "warnings": (["OCR_LOW_CONFIDENCE"] if low_confidence else [])
+            + (["SLIDE_MEDIA_UNAVAILABLE"] if slide_warning else []),
+            "slide": slide,
             "blocks": [
                 {
                     "id": str(block.id),
@@ -166,6 +181,39 @@ async def preview_version(
         },
         "request_id": request.state.request_id,
     }
+
+
+@router.get("/versions/{version_id}/slides/{slide_number}/images/{shape_id}")
+async def preview_slide_image(
+    version_id: UUID,
+    slide_number: int,
+    shape_id: int,
+    auth: Auth,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Response:
+    _version, blob, _document = await _owned_version(db, auth[0].id, version_id)
+    if not blob.mime.endswith("presentationml.presentation"):
+        raise HTTPException(415, "INLINE_PREVIEW_UNSUPPORTED")
+    if slide_number < 1 or shape_id < 1:
+        raise HTTPException(404, "RESOURCE_NOT_FOUND")
+    path = blob_path(get_settings().storage_root, auth[0].id, blob.storage_key)
+    if not path.is_file():
+        raise HTTPException(410, "SOURCE_UNAVAILABLE")
+    try:
+        image = await run_in_threadpool(slide_image_png, path, slide_number, shape_id)
+    except Exception as exc:
+        raise HTTPException(422, "SLIDE_PREVIEW_UNAVAILABLE") from exc
+    if image is None:
+        raise HTTPException(404, "RESOURCE_NOT_FOUND")
+    return Response(
+        content=image,
+        media_type="image/png",
+        headers={
+            "Content-Disposition": "inline",
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store",
+        },
+    )
 
 
 def _byte_range(value: str | None, size: int) -> tuple[int, int] | None:
