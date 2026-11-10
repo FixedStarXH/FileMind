@@ -6,13 +6,16 @@ services:
     env_file:
       - .env
     environment:
+      APP_ENV: ${APP_ENV:-development}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
       DATABASE_URL: postgresql+psycopg://filemind:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/filemind
       REDIS_URL: redis://redis:6379/0
       STORAGE_ROOT: /data/files
       MODEL_CACHE_DIR: /data/models
+      APP_ORIGIN: ${APP_ORIGIN:-http://127.0.0.1:5173}
       ENABLE_INGESTION_WORKER: ${ENABLE_INGESTION_WORKER:-false}
     ports:
-      - "127.0.0.1:8000:8000"
+      - "${API_BIND:-127.0.0.1:8000}:8000"
     volumes:
       - filemind_files:/data/files
       - filemind_models:/data/models:ro
@@ -201,7 +204,7 @@ services:
       POSTGRES_USER: filemind
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
     ports:
-      - "127.0.0.1:5433:5432"
+      - "${POSTGRES_BIND:-127.0.0.1:5433}:5432"
     volumes:
       - filemind_postgres:/var/lib/postgresql/data
     healthcheck:
@@ -215,7 +218,7 @@ services:
     image: redis:7.4.2-alpine
     command: ["redis-server", "--appendonly", "yes", "--save", "60", "1000"]
     ports:
-      - "127.0.0.1:6380:6379"
+      - "${REDIS_BIND:-127.0.0.1:6380}:6379"
     volumes:
       - filemind_redis:/data
     healthcheck:
@@ -224,6 +227,40 @@ services:
       timeout: 3s
       retries: 12
     restart: unless-stopped
+
+  web:
+    profiles: [production]
+    user: "101:101"
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "${WEB_BIND:-127.0.0.1:8080}:8080"
+    depends_on:
+      api:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/health/live || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=16m,mode=1777
+      - /var/run:size=2m,mode=1777
+      - /tmp:size=8m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  volume-tools:
+    profiles: [ops]
+    image: alpine:3.22
+    volumes:
+      - filemind_files:/data
+    entrypoint: ["tar"]
 
 volumes:
   filemind_postgres:

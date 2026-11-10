@@ -15,7 +15,7 @@
 | M7 | 整理方案、审批、事务执行、审计 | M6 | 版本冲突、双击审批、重放不重复写；`feat: add approved file organization` |
 | M8（已完成） | 求职资料包、缺项提示、ZIP和过期清理 | M7 | manifest一致、源文件删除使下载失效；`feat: generate application document packs` |
 | M9（已完成） | 响应式联调、关键E2E、性能与安全复核 | M8 | Edge 桌面/375px 模拟视口关键路径及安全边界；性能与真实模型评测限制记录在 `docs/23-m9-validation.md`；`test: verify release workflows and evaluation` |
-| M10 | 部署、恢复演练、演示数据、说明书 | M9 | 新环境按README部署、备份恢复；`docs: deliver deployment and demo guide` |
+| M10（已完成） | 部署、恢复演练、演示数据、说明书 | M9 | 生产前端容器与健康代理通过；隔离 Compose 项目完成数据库/文件卷恢复冒烟，Age 加密脚本限制见 `docs/24-m10-validation.md`；`docs: deliver deployment and demo guide` |
 
 前端随M1–M8逐模块交付，不把所有页面拖到最后。M1做登录，M2做资料库，M3任务中心，M4预览，M5搜索，M6对话，M7审批，M8资料包。
 
