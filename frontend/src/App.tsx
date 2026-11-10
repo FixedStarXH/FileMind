@@ -231,7 +231,7 @@ export default function App() {
           {error && <p className="feedback error" role="alert">{error}</p>}
           {notice && <p className="feedback success" role="status">{notice}</p>}
           <div className="next-step"><span className="step-dot"><Check size={14} /></span><span>账户与隐私空间已就绪</span><ArrowRight size={16} className="step-arrow" /></div>
-          <p className="footnote">资料库上传与管理功能将在下一模块接入。</p>
+          <p className="footnote">返回资料库即可上传文件，或先在这里查看存储空间与账户安全设置。</p>
         </section>
       </main>
     );
