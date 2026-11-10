@@ -24,6 +24,7 @@ from filemind.library_schemas import (
     TagPatch,
 )
 from filemind.models import Blob, Document, DocumentTag, DocumentVersion, Folder, Tag
+from filemind.routes_exports import invalidate_document_exports
 
 router = APIRouter(prefix="/api/v1", tags=["library"])
 _PAGE_LIMIT_DEFAULT = 20
@@ -561,6 +562,7 @@ async def trash_document(
     document.trashed_at = datetime.now(UTC)
     document.metadata_revision += 1
     document.updated_at = datetime.now(UTC)
+    await invalidate_document_exports(db, auth[0].id, document.id)
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

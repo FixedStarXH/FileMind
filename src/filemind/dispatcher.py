@@ -164,6 +164,9 @@ def run_once(engine: Engine) -> tuple[int, int]:
     with Session(engine) as session, session.begin():
         recovered = recover_expired_leases(session)
         published = dispatch_ready(session)
+    from filemind.export_runtime import cleanup_obsolete_exports
+
+    cleanup_obsolete_exports(engine)
     return recovered, published
 
 

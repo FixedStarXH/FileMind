@@ -918,7 +918,7 @@ def _finalize_failure(engine: Engine, claimed: AgentClaim, code: str) -> None:
                 "terminal",
                 {"status": run.status, "error": run.error_code},
             )
-            if run.mode == "organize":
+            if run.mode in {"organize", "application_pack"}:
                 plan = session.scalar(
                     select(OrganizationPlan)
                     .where(
@@ -963,7 +963,7 @@ def run_agent_task(engine: Engine, claimed: AgentClaim) -> None:
         )
         if run is None:
             raise AgentFailure("RESOURCE_NOT_FOUND")
-        organizing = run.mode == "organize"
+        organizing = run.mode in {"organize", "application_pack"}
         if organizing:
             initial: QAState = {}
         else:

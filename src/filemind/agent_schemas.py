@@ -27,7 +27,7 @@ class RunCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     conversation_id: UUID | None = None
-    mode: Literal["qa", "organize"] = "qa"
+    mode: Literal["qa", "organize", "application_pack"] = "qa"
     instruction: str = Field(min_length=1, max_length=4000)
     scope: SearchScope
 
@@ -43,8 +43,8 @@ class RunCreate(BaseModel):
     def validate_mode(self) -> "RunCreate":
         if self.mode == "qa" and self.conversation_id is None:
             raise ValueError("qa mode requires a conversation")
-        if self.mode == "organize" and self.scope.all_documents:
-            raise ValueError("organization requires a finite scope")
+        if self.mode in {"organize", "application_pack"} and self.scope.all_documents:
+            raise ValueError("this mode requires a finite scope")
         return self
 
 

@@ -27,9 +27,11 @@ from filemind.models import (
     Approval,
     AuditEvent,
     BackgroundTask,
+    Chunk,
     Citation,
     Conversation,
     Document,
+    DocumentVersion,
     Message,
     OrganizationPlan,
     RunStep,
@@ -185,7 +187,7 @@ async def create_run(
         raise HTTPException(403, "AI_DISABLED")
     if not config.has_deepseek_key:
         raise HTTPException(503, "AI_NOT_CONFIGURED")
-    if body.mode == "organize" and (
+    if body.mode in {"organize", "application_pack"} and (
         body.scope.all_documents
         or not (
             body.scope.document_ids
@@ -243,7 +245,7 @@ async def create_run(
         raise HTTPException(429, "RATE_LIMITED", headers={"Retry-After": "3600"})
 
     now = datetime.now(UTC)
-    if conversation is None:
+    if conversation is None and body.mode != "application_pack":
         conversation = Conversation(
             id=uuid4(),
             owner_id=owner.id,
@@ -258,7 +260,7 @@ async def create_run(
     run = AgentRun(
         id=run_id,
         owner_id=owner.id,
-        conversation_id=conversation.id,
+        conversation_id=conversation.id if conversation is not None else None,
         mode=body.mode,
         instruction=body.instruction.strip(),
         scope=cast(dict[str, object], body.scope.model_dump(mode="json")),
@@ -266,27 +268,34 @@ async def create_run(
         graph_thread_id=str(uuid4()),
         budget={"llm_calls": 0, "tool_calls": 0, "max_llm_calls": config.run_max_llm_calls},
         model=config.deepseek_model,
-        prompt_version="filemind-qa-1" if body.mode == "qa" else "filemind-organize-1",
+        prompt_version=(
+            "filemind-qa-1"
+            if body.mode == "qa"
+            else "filemind-application-pack-1"
+            if body.mode == "application_pack"
+            else "filemind-organize-1"
+        ),
         next_event_seq=2,
         created_at=now,
     )
     task = enqueue_task(db, owner.id, "agent_run", run_id, stage="queued")
     run.task_id = task.id
     db.add(run)
-    db.add(
-        Message(
-            id=uuid4(),
-            owner_id=owner.id,
-            conversation_id=conversation.id,
-            role="user",
-            content=run.instruction,
-            run_id=run.id,
-            created_at=now,
+    if conversation is not None:
+        db.add(
+            Message(
+                id=uuid4(),
+                owner_id=owner.id,
+                conversation_id=conversation.id,
+                role="user",
+                content=run.instruction,
+                run_id=run.id,
+                created_at=now,
+            )
         )
-    )
-    conversation.updated_at = now
-    if body.mode == "qa" and conversation.title == "新的问答":
-        conversation.title = run.instruction[:80]
+        conversation.updated_at = now
+        if body.mode == "qa" and conversation.title == "新的问答":
+            conversation.title = run.instruction[:80]
     db.add(
         StreamEvent(
             id=uuid4(),
@@ -299,7 +308,13 @@ async def create_run(
                 "run_id": str(run.id),
                 "seq": 1,
                 "stage": "queued",
-                "message": "已加入问答队列" if body.mode == "qa" else "已加入整理队列",
+                "message": (
+                    "已加入问答队列"
+                    if body.mode == "qa"
+                    else "已加入资料包分析队列"
+                    if body.mode == "application_pack"
+                    else "已加入整理队列"
+                ),
             },
             created_at=now,
         )
@@ -363,7 +378,7 @@ async def get_run(
             .order_by(OrganizationPlan.revision.desc())
             .limit(1)
         )
-        if run.mode == "organize"
+        if run.mode in {"organize", "application_pack"}
         else None
     )
     return {
@@ -408,6 +423,7 @@ def _plan_payload(plan: OrganizationPlan) -> dict[str, object]:
         "status": plan.status,
         "expires_at": plan.expires_at.isoformat(),
         "actions": plan.actions,
+        "missing_items": plan.missing_items,
     }
 
 
@@ -427,7 +443,59 @@ async def get_run_plan(
     )
     if plan is None:
         raise HTTPException(404, "PLAN_NOT_READY")
-    return {"data": _plan_payload(plan), "request_id": request.state.request_id}
+    payload = _plan_payload(plan)
+    if run.mode == "application_pack":
+        action_items = cast(list[dict[str, object]], json.loads(json.dumps(plan.actions)))
+        source_ids = {
+            UUID(source_id)
+            for action in action_items
+            for source_id in cast(list[str], action.get("citation_ids", []))
+        }
+        source_rows = (
+            (
+                await db.execute(
+                    select(Chunk, Document.id, Document.title)
+                    .join(
+                        DocumentVersion,
+                        (DocumentVersion.id == Chunk.version_id)
+                        & (DocumentVersion.owner_id == Chunk.owner_id),
+                    )
+                    .join(
+                        Document,
+                        (Document.id == DocumentVersion.document_id)
+                        & (Document.owner_id == DocumentVersion.owner_id),
+                    )
+                    .where(
+                        Chunk.owner_id == auth[0].id,
+                        Chunk.id.in_(source_ids),
+                        Document.state == "active",
+                        Document.current_version_id == Chunk.version_id,
+                        DocumentVersion.active_generation == Chunk.generation,
+                    )
+                    .limit(400)
+                )
+            ).all()
+            if source_ids
+            else []
+        )
+        sources_by_id = {
+            str(chunk.id): {
+                "id": str(chunk.id),
+                "document_id": str(document_id),
+                "title": title,
+                "locator": chunk.locator,
+                "excerpt": chunk.text[:500],
+            }
+            for chunk, document_id, title in source_rows
+        }
+        for action in action_items:
+            action["sources"] = [
+                sources_by_id[source_id]
+                for source_id in cast(list[str], action.get("citation_ids", []))
+                if source_id in sources_by_id
+            ]
+        payload["actions"] = action_items
+    return {"data": payload, "request_id": request.state.request_id}
 
 
 def _audit_cursor(created_at: datetime, event_id: UUID) -> str:
@@ -523,7 +591,7 @@ async def submit_approval(
         .where(AgentRun.id == run_id, AgentRun.owner_id == auth[0].id)
         .with_for_update()
     )
-    if run is None or run.mode != "organize":
+    if run is None or run.mode not in {"organize", "application_pack"}:
         raise HTTPException(404, "RESOURCE_NOT_FOUND")
     plan = await db.scalar(
         select(OrganizationPlan)
@@ -664,7 +732,12 @@ async def submit_approval(
             run,
             "run.step",
             "approval.queued",
-            {"stage": "approved", "message": "已确认所选建议，正在应用"},
+            {
+                "stage": "approved",
+                "message": "已确认所选材料，正在生成资料包"
+                if run.mode == "application_pack"
+                else "已确认所选建议，正在应用",
+            },
         )
     db.add(
         Approval(
@@ -686,7 +759,11 @@ async def submit_approval(
         AuditEvent(
             owner_id=auth[0].id,
             actor_id=auth[0].id,
-            action="organization.approval.submitted",
+            action=(
+                "application_pack.approval.submitted"
+                if run.mode == "application_pack"
+                else "organization.approval.submitted"
+            ),
             resource_type="plan",
             resource_id=plan.id,
             request_id=request.state.request_id,
@@ -715,7 +792,7 @@ async def cancel_run(
     )
     if run is None:
         raise HTTPException(404, "RESOURCE_NOT_FOUND")
-    if run.status == "awaiting_approval" and run.mode == "organize":
+    if run.status == "awaiting_approval" and run.mode in {"organize", "application_pack"}:
         plan = await db.scalar(
             select(OrganizationPlan)
             .where(OrganizationPlan.run_id == run.id, OrganizationPlan.owner_id == run.owner_id)
@@ -749,7 +826,7 @@ async def cancel_run(
         task.cancel_requested = True
         run.status = "cancelled"
         run.finished_at = now
-        if run.mode == "organize":
+        if run.mode in {"organize", "application_pack"}:
             plan = await db.scalar(
                 select(OrganizationPlan)
                 .where(OrganizationPlan.run_id == run.id, OrganizationPlan.owner_id == run.owner_id)
@@ -770,7 +847,7 @@ async def cancel_run(
     elif task.status == "running":
         task.status = "cancel_requested"
         task.cancel_requested = True
-        if run.mode == "organize":
+        if run.mode in {"organize", "application_pack"}:
             plan = await db.scalar(
                 select(OrganizationPlan)
                 .where(OrganizationPlan.run_id == run.id, OrganizationPlan.owner_id == run.owner_id)

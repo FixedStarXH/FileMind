@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from "react";
 import {
-  Archive, ArrowDownUp, Check, ChevronDown, ChevronRight, Clock3, Eye, FileArchive, FileImage,
+  Archive, ArrowDownUp, BriefcaseBusiness, Check, ChevronDown, ChevronRight, Clock3, Eye, FileArchive, FileImage,
   FileText, Folder, FolderPlus, HardDrive, Heart, LoaderCircle, LogOut, MoreHorizontal,
   MessageSquareText, Plus, Search, Settings2, ShieldCheck, Star, Tag as TagIcon, Trash2, Upload, WandSparkles, X,
 } from "lucide-react";
@@ -121,10 +121,10 @@ function fileIcon(mime: string | null) {
 }
 
 export default function Library({
-  user, settings, csrf, busy, setBusy, onSettings, onTasks, onAssistant, onOrganizer, onLogout,
+  user, settings, csrf, busy, setBusy, onSettings, onTasks, onAssistant, onOrganizer, onApplicationPacks, onLogout,
 }: {
   user: User; settings: Settings; csrf: string; busy: boolean; setBusy: (value: boolean) => void;
-  onSettings: () => void; onTasks: () => void; onAssistant: () => void; onOrganizer: () => void; onLogout: () => void;
+  onSettings: () => void; onTasks: () => void; onAssistant: () => void; onOrganizer: () => void; onApplicationPacks: () => void; onLogout: () => void;
 }) {
   const [folders, setFolders] = useState<FolderItem[]>([]);
   const [tags, setTags] = useState<TagItem[]>([]);
@@ -554,6 +554,7 @@ export default function Library({
           <button className="nav-item" onClick={onTasks}><Clock3 size={16} />任务中心</button>
           <button className="nav-item assistant-nav-item" onClick={onAssistant}><MessageSquareText size={16} />AI 问答</button>
           <button className="nav-item assistant-nav-item" onClick={onOrganizer}><WandSparkles size={16} />资料整理</button>
+          <button className="nav-item assistant-nav-item" onClick={onApplicationPacks}><BriefcaseBusiness size={16} />求职资料包</button>
         </nav>
         <div className="side-section-heading"><span>文件夹</span><button onClick={() => openDialog({ kind: "folder" })} aria-label="新建文件夹"><Plus size={16} /></button></div>
         <div className="folder-tree">{renderFolderTree(null)}</div>

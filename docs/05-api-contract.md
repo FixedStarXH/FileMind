@@ -50,13 +50,14 @@
 | GET /conversations | 游标 | 200 列表 |
 | GET /conversations/{id} | — | 200 会话、消息与引用 |
 | DELETE /conversations/{id} | 取消关联活动任务后清理 | 202 `{task_id}` |
-| POST /agent/runs | `{mode:"qa"|"organize",conversation_id?,instruction,scope}`；organize 必须有限范围 | 202 `{run_id,status,events_url}`；Key 未配置503 `AI_NOT_CONFIGURED`；账户未启用AI返回403 |
+| POST /agent/runs | `{mode:"qa"|"organize"|"application_pack",conversation_id?,instruction,scope}`；organize/application_pack 必须有限范围 | 202 `{run_id,status,events_url}`；Key 未配置503 `AI_NOT_CONFIGURED`；账户未启用AI返回403 |
 | GET /agent/runs/{id} | — | 200 RunDetail |
 | GET /agent/runs/{id}/events | SSE；Last-Event-ID? | 200 text/event-stream |
 | POST /agent/runs/{id}/cancel | `{}` | 202 `{status:"cancel_requested"}` |
 | GET /agent/runs/{id}/plan | — | 200 Plan；尚无方案404 PLAN_NOT_READY |
 | POST /agent/runs/{id}/approval | ApprovalRequest | 202 `{run_id,status}` |
-| POST /exports | `{version_ids:[...]}`，1–100项；仅手动导出，不接受 agent_run_id | 202 `{export_id,task_id}` |
+| POST /exports | `{version_ids:[...]}`，1–100项；仅手动导出，不接受 agent_run_id；Idempotency-Key | 202 `{export_id,task}`；创建时预留空间 |
+| GET /exports | `run_id?`, `cursor?`, `limit=20`（1–100） | 200 导出列表与下一游标 |
 | GET /exports/{id} | — | 200 `{state,expires_at,download_url?}` |
 | GET /exports/{id}/download | 已过期410；源文档不可用410 | 200 ZIP |
 | GET /tasks | kind?,status?,cursor? | 200 列表 |
@@ -104,13 +105,15 @@
 }
 ```
 
-mode=`qa|organize|application_pack`。instruction 长度1..4000；qa 必须提供 conversation_id，其他模式可空；同一 conversation 同时只允许一个活动 run，冲突409。客户端不能设置 system prompt、工具名、owner_id、预算上限。
+mode=`qa|organize|application_pack`。instruction 长度1..4000；qa 必须提供 conversation_id，其他模式可空；仅当提供 conversation_id 时，同一会话同时只允许一个活动 run，冲突409。application_pack 可独立运行，不创建问答会话。客户端不能设置 system prompt、工具名、owner_id、预算上限。
 
 **RunDetail**：`id,mode,status,scope_snapshot,steps[],answer?,citations[],plan_id?,usage,error?`。只展示工具摘要，不返回模型内部思维链。
 
-**Plan**：`id,revision,plan_hash,expires_at,actions[],missing_items[]`。action 包含 `id,type,document_id,version_id?,expected_revision,before,after,reason,citation_ids[]`；允许 type=`rename|move|set_tags|include_in_export`。`include_in_export` 必须包含版本ID和所依据文档的 revision；确认前再次校验这两个值。移动目标必须是已有文件夹；未建目录时让用户先创建，首版避免嵌套创建与回滚。
+**Plan**：`id,revision,plan_hash,expires_at,actions[],missing_items[]`。action 包含 `id,type,document_id,version_id?,expected_revision,before,after,reason,citation_ids[]`；M7 type=`rename|move|set_tags`，M8 application_pack type=`include_in_export`。打包动作必须指向范围内已识别的当前版本，证据 chunk 必须属于该文档；审批时再次校验 revision 与版本。移动目标必须是已有文件夹；未建目录时让用户先创建，首版避免嵌套创建与回滚。
 
-`application_pack` 的需求由 instruction 描述；服务端另保存结构化的材料清单、缺失项与来源，确认后仅为选中的 `include_in_export` 项创建导出任务。直接 `POST /exports` 是用户手动选文件的操作，不会读取或执行 Agent 方案；Agent 路径只能通过审批节点创建导出任务。
+`application_pack` 的需求由 instruction 描述；服务端保存结构化材料清单、缺失项与来源 chunk ID。用户确认后仅为勾选的 `include_in_export` 项在同一事务创建导出任务、ZIP artifact、manifest 与配额预留。直接 `POST /exports` 是用户手动选文件的操作，不会读取或执行 Agent 方案。
+
+ZIP 使用 ZIP_STORED，避免压缩炸弹和不可预测的空间估算；manifest.json 包含源文档 ID、固定版本、文件名、SHA-256、字节数、ZIP 内路径，以及 Agent 方案的用途、证据 ID 和缺项。下载需重新鉴权且验证所有源文件仍处于 active；移入回收站/永久删除使包立即失效。ready 后24小时到期，dispatcher 清理 ZIP 并扣除对应已用空间。导出大小默认上限500 MiB，创建时按源文件总大小和 ZIP/manifest 余量预留；超配额返回409 `QUOTA_EXCEEDED`。
 
 **ApprovalRequest**：
 

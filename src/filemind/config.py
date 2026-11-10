@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     ocr_backend: str = "rapidocr"
 
     max_upload_bytes: int = 52_428_800
+    max_export_bytes: int = 524_288_000
     max_pdf_pages: int = 200
     user_quota_bytes: int = 2_147_483_648
     ocr_concurrency: int = 1
@@ -82,6 +83,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "max_upload_bytes",
+        "max_export_bytes",
         "max_pdf_pages",
         "user_quota_bytes",
         "ocr_concurrency",

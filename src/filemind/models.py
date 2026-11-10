@@ -394,7 +394,7 @@ class AgentRun(Base):
         ForeignKeyConstraint(["task_id"], ["tasks.id"], ondelete="SET NULL"),
         UniqueConstraint("owner_id", "id"),
         UniqueConstraint("graph_thread_id"),
-        CheckConstraint("mode IN ('qa', 'organize')"),
+        CheckConstraint("mode IN ('qa', 'organize', 'application_pack')"),
         CheckConstraint(
             "status IN ('queued', 'running', 'awaiting_approval', 'succeeded', "
             "'failed', 'cancelled', 'expired')"
@@ -547,6 +547,7 @@ class OrganizationPlan(Base):
     revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     plan_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     actions: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+    missing_items: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
     status: Mapped[str] = mapped_column(String(24), default="awaiting_approval", nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -622,4 +623,93 @@ class AuditEvent(Base):
     resource_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
     request_id: Mapped[str | None] = mapped_column(String(64))
     details: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ExportArtifact(Base):
+    __tablename__ = "export_artifacts"
+    __table_args__ = (
+        ForeignKeyConstraint(["owner_id"], ["users.id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(
+            ["owner_id", "run_id"], ["agent_runs.owner_id", "agent_runs.id"], ondelete="CASCADE"
+        ),
+        ForeignKeyConstraint(["task_id"], ["tasks.id"], ondelete="SET NULL"),
+        UniqueConstraint("owner_id", "id"),
+        UniqueConstraint("owner_id", "run_id"),
+        UniqueConstraint("task_id"),
+        CheckConstraint(
+            "state IN ('queued', 'running', 'ready', 'failed', 'expired', "
+            "'invalidated', 'cancelled')"
+        ),
+        CheckConstraint("size_bytes IS NULL OR size_bytes >= 0"),
+        Index("ix_exports_owner_created", "owner_id", "created_at", "id"),
+        Index("ix_exports_expiry", "state", "expires_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    owner_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    run_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    task_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    storage_key: Mapped[str | None] = mapped_column(String(64))
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    state: Mapped[str] = mapped_column(String(24), default="queued", nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    manifest: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ExportItem(Base):
+    __tablename__ = "export_items"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["owner_id", "export_id"],
+            ["export_artifacts.owner_id", "export_artifacts.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["owner_id", "document_id"], ["documents.owner_id", "documents.id"], ondelete="CASCADE"
+        ),
+        ForeignKeyConstraint(
+            ["owner_id", "version_id"],
+            ["document_versions.owner_id", "document_versions.id"],
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("export_id", "version_id"),
+        Index("ix_export_items_owner_document", "owner_id", "document_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    owner_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    export_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    document_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    version_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    original_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
+class QuotaReservation(Base):
+    __tablename__ = "quota_reservations"
+    __table_args__ = (
+        ForeignKeyConstraint(["owner_id"], ["users.id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(
+            ["owner_id", "export_id"],
+            ["export_artifacts.owner_id", "export_artifacts.id"],
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("export_id"),
+        CheckConstraint("bytes > 0"),
+        CheckConstraint("state IN ('reserved', 'consumed', 'released')"),
+        Index("ix_quota_reservations_owner_state", "owner_id", "state"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    owner_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    export_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), default="reserved", nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

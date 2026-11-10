@@ -1,6 +1,6 @@
 # 04 数据库逻辑设计
 
-PostgreSQL 17，时区 UTC。ID 使用 UUID；时间 timestamptz；业务字节数 bigint；所有用户数据带 owner_id。M7 迁移 `0008_approved_organization` 扩展 Agent run 状态并创建整理计划、审批、动作执行账本与审计事件；M6 `0007_agent_qa` 创建问答与 SSE 事件表并初始化 `agent_state` checkpoint schema；M4 `0005_document_parsing` 创建 `extracted_blocks`；M3 已迁移 `tasks` 和 `outbox`；M2 已迁移文件生命周期表；M1 已迁移 `users` 与 `sessions`。其余表是后续模块的设计依据。
+PostgreSQL 17，时区 UTC。ID 使用 UUID；时间 timestamptz；业务字节数 bigint；所有用户数据带 owner_id。M8 迁移 `0009_application_packs` 开放 application_pack run，保存缺项清单并创建导出产物、文件项与配额预留表；M7 `0008_approved_organization` 创建整理计划、审批、动作执行账本与审计事件；M6 `0007_agent_qa` 创建问答与 SSE 事件表并初始化 `agent_state` checkpoint schema；M4 `0005_document_parsing` 创建 `extracted_blocks`；M3 已迁移 `tasks` 和 `outbox`；M2 已迁移文件生命周期表；M1 已迁移 `users` 与 `sessions`。
 
 ## 1. 表结构
 
@@ -22,18 +22,18 @@ PostgreSQL 17，时区 UTC。ID 使用 UUID；时间 timestamptz；业务字节�
 | outbox | event_type、aggregate_id(task_id)、dispatch_seq、payload JSONB（只含 task_id）、published_at?、next_attempt_at、attempt；UNIQUE(event_type,aggregate_id,dispatch_seq) |
 | conversations | owner_id、title、scope JSONB、revision |
 | messages | owner_id、conversation_id、role、content、run_id?、redacted_at?；服务端分配 role |
-| agent_runs | owner_id、conversation_id?、mode(qa/organize)、instruction、scope JSONB、status(queued/running/awaiting_approval/succeeded/failed/cancelled/expired)、task_id?、graph_thread_id 唯一、token_usage JSONB、budget JSONB、model、prompt_version、retrieval_version?、answer?、error_code?、事件序号、started_at?、finished_at? |
+| agent_runs | owner_id、conversation_id?、mode(qa/organize/application_pack)、instruction、scope JSONB、status(queued/running/awaiting_approval/succeeded/failed/cancelled/expired)、task_id?、graph_thread_id 唯一、token_usage JSONB、budget JSONB、model、prompt_version、retrieval_version?、answer?、error_code?、事件序号、started_at?、finished_at? |
 | run_steps | owner_id、run_id、seq、tool_name、safe_input JSONB、safe_output JSONB、status、duration_ms；UNIQUE(run_id,seq) |
-| plans | owner_id、run_id、revision、actions JSONB、plan_hash、status、expires_at；UNIQUE(run_id,revision) |
+| plans | owner_id、run_id、revision、actions JSONB、missing_items JSONB、plan_hash、status、expires_at；UNIQUE(run_id,revision) |
 | approvals | owner_id、plan_id、plan_hash、selected_action_ids JSONB、decision、execution_status、idempotency_key、response_body、decided_at?；UNIQUE(plan_id) |
 | plan_action_executions | owner_id、approval_id、action_id、run_id、document_id、action_type、applied_at；唯一约束防止图恢复重放重复修改 |
 | citations | owner_id、run_id、citation_key、document_id、version_id、chunk_id、locator JSONB、quote、status、used；用于校验回答引用及在源文件删除时清理关联内容 |
-| export_artifacts | owner_id、run_id?、task_id、storage_key?、size_bytes?、state、expires_at（24小时） |
-| export_items | owner_id、export_id、document_id、version_id；UNIQUE(export_id,version_id) |
+| export_artifacts | owner_id、run_id?、task_id?、storage_key?、size_bytes?、state、manifest JSONB、error_code?、expires_at（ready后24小时）；每个 Agent run 最多一个产物 |
+| export_items | owner_id、export_id、document_id、version_id、title、original_name、sha256、size_bytes；UNIQUE(export_id,version_id) |
 | audit_events | owner_id、actor_id、action、resource_type、resource_id、request_id、details JSONB、created_at；只追加，避免保存全文，提供账户隔离的游标查询 |
 | idempotency_keys | owner_id、route、key、request_hash、response_status、response_body、expires_at；UNIQUE(owner_id,route,key) |
 | stream_events | owner_id、run_id、seq bigint、event_type、event_key?、payload JSONB、created_at；UNIQUE(run_id,seq)，事件键幂等，保留7天 |
-| quota_reservations | owner_id、resource_id、bytes、expires_at、state；上传/导出预留额度，到期释放 |
+| quota_reservations | owner_id、export_id、bytes、expires_at、state；导出开始时预留额度，完成后结算实际 ZIP 字节，失败/取消/失效时释放预留 |
 
 LangGraph checkpoint 表由固定版本的 PostgresSaver 迁移管理，使用单独 schema `agent_state`；graph_thread_id 由服务端生成并通过 agent_runs 映射授权，客户端不能直接指定。
 

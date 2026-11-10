@@ -33,6 +33,7 @@ from filemind.http_contracts import (
 )
 from filemind.library_schemas import PermanentDelete
 from filemind.models import BackgroundTask, Blob, Document, DocumentVersion, User
+from filemind.routes_exports import invalidate_document_exports
 from filemind.routes_library import document_payload, owned_document, owned_folder
 from filemind.storage import StagedUpload, blob_path, publish_blob, stage_upload
 from filemind.task_contracts import enqueue_task, task_payload
@@ -400,6 +401,7 @@ async def permanently_delete_document(
         document.state = "purging"
         document.metadata_revision += 1
         document.updated_at = datetime.now(UTC)
+    await invalidate_document_exports(db, owner_id, document.id)
     active_parse_tasks = list(
         (
             await db.scalars(

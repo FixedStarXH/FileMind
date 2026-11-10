@@ -4,6 +4,7 @@ import Library from "./Library";
 import Assistant from "./Assistant";
 import Organizer from "./Organizer";
 import TaskCenter from "./TaskCenter";
+import ApplicationPacks from "./ApplicationPacks";
 import { request } from "./api";
 
 type User = { id: string; email: string };
@@ -43,7 +44,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [view, setView] = useState<"library" | "tasks" | "settings" | "assistant" | "organizer">("library");
+  const [view, setView] = useState<"library" | "tasks" | "settings" | "assistant" | "organizer" | "packs">("library");
 
   async function loadAccount() {
     const me = await request<{ user: User; csrf_token: string }>("/auth/me");
@@ -159,6 +160,7 @@ export default function App() {
         onTasks={() => setView("tasks")}
         onAssistant={() => setView("assistant")}
         onOrganizer={() => setView("organizer")}
+        onApplicationPacks={() => setView("packs")}
         onLogout={() => void logout()}
       />
     );
@@ -174,6 +176,10 @@ export default function App() {
 
   if (user && settings && view === "organizer") {
     return <Organizer csrf={csrf} hasDeepSeek={settings.capabilities.deepseek} aiEnabled={settings.ai_enabled} onLibrary={() => setView("library")} onSettings={() => setView("settings")} onLogout={() => void logout()} />;
+  }
+
+  if (user && settings && view === "packs") {
+    return <ApplicationPacks csrf={csrf} aiEnabled={settings.ai_enabled} hasDeepSeek={settings.capabilities.deepseek} onLibrary={() => setView("library")} onSettings={() => setView("settings")} onLogout={() => void logout()} />;
   }
 
   if (user && settings) {

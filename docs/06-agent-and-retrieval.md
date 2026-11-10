@@ -2,7 +2,7 @@
 
 ## 1. 能力边界
 
-普通上传解析是确定性流水线。Agent 用于需要根据资料决定下一步的任务：选择检索查询、补充证据、生成整理建议、识别资料缺项。首版一个 Agent、三种模式，共用鉴权与工具服务。
+普通上传解析是确定性流水线。Agent 用于需要根据资料决定下一步的任务：选择检索查询、补充证据、生成整理建议、整理求职材料并识别缺项。首版一个 Agent、三种模式，共用鉴权与工具服务。
 
 ```mermaid
 flowchart TD
@@ -69,3 +69,11 @@ M6 QA GraphState 保存 run_id、owner_id、thread_id、当前指令、scope 快
 - 首次启用 AI 告知：问题和选中资料的相关片段会发送到 DeepSeek；本地 OCR/向量不等于全部处理离线。
 
 记录 model、prompt_version、retrieval_version、pipeline_version、token usage、耗时、错误及人工反馈。默认日志不包含完整提示词与资料正文。
+
+## 7. M8 求职资料包
+
+`application_pack` 是独立的持久化 run，不要求会话。服务端只将有限范围内已完成识别的当前版本及最多4个来源片段交给 DeepSeek；Agent 返回材料用途、理由、证据 chunk ID 与缺项。服务器拒绝范围外文档、重复文档或不属于当前文档的证据 ID。
+
+方案进入同一 24 小时人工审批节点。审批后在单个数据库事务复核 metadata_revision/current_version，并创建 ExportArtifact、固定版本 ExportItem、任务、Outbox 和空间预留。勾选的部分材料构成 ZIP，不勾选的不导出。手动导出只接受用户显式选择的版本 ID，不经过 Agent。
+
+ZIP 采用 ZIP_STORED，manifest.json 写入每个源文件 SHA-256、版本、路径和 Agent 用途/证据 ID/缺项。worker 校验源 blob 内容 hash 后再写 ZIP 临时文件并原子发布。导出预留按源字节数加最大 1 MiB manifest 与每项 4 KiB 开销计算；超过500 MiB或用户额度返回错误。任务失败/取消释放预留；成功按 ZIP 实际字节转入 used_bytes。文件入回收站立即禁用相关产物；dispatcher 清除 ZIP 并扣回已用空间。ready 后24小时到期，下载同时校验 owner、到期时间与所有源文件状态。

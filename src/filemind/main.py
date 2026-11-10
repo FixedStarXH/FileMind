@@ -16,6 +16,7 @@ from filemind.config import get_settings
 from filemind.routes_agent import router as agent_router
 from filemind.routes_auth import router as account_router
 from filemind.routes_documents import router as documents_router
+from filemind.routes_exports import router as exports_router
 from filemind.routes_library import router as library_router
 from filemind.routes_preview import router as preview_router
 from filemind.routes_search import router as search_router
@@ -45,6 +46,7 @@ app = FastAPI(
 app.include_router(account_router)
 app.include_router(library_router)
 app.include_router(documents_router)
+app.include_router(exports_router)
 app.include_router(preview_router)
 app.include_router(search_router)
 app.include_router(agent_router)

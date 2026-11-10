@@ -19,8 +19,10 @@ from filemind.models import (
     BackgroundTask,
     Document,
     DocumentVersion,
+    ExportArtifact,
     OrganizationPlan,
 )
+from filemind.routes_exports import release_export_reservation
 from filemind.task_contracts import enqueue_task, task_payload
 
 router = APIRouter(prefix="/api/v1", tags=["tasks"])
@@ -125,10 +127,20 @@ async def cancel_task(
     if task.kind == "document_purge":
         raise HTTPException(409, "TASK_NOT_CANCELLABLE")
     agent_run = None
+    export_artifact = None
     if task.kind == "agent_run" and task.resource_id is not None:
         agent_run = await db.scalar(
             select(AgentRun)
             .where(AgentRun.id == task.resource_id, AgentRun.owner_id == auth[0].id)
+            .with_for_update()
+        )
+    if task.kind == "export" and task.resource_id is not None:
+        export_artifact = await db.scalar(
+            select(ExportArtifact)
+            .where(
+                ExportArtifact.id == task.resource_id,
+                ExportArtifact.owner_id == auth[0].id,
+            )
             .with_for_update()
         )
     if task.status == "queued":
@@ -136,10 +148,14 @@ async def cancel_task(
         task.stage = "cancelled"
         task.cancel_requested = True
         task.updated_at = datetime.now(UTC)
+        if export_artifact is not None:
+            export_artifact.state = "cancelled"
+            export_artifact.updated_at = datetime.now(UTC)
+            await release_export_reservation(db, export_artifact)
         if agent_run is not None:
             agent_run.status = "cancelled"
             agent_run.finished_at = datetime.now(UTC)
-            if agent_run.mode == "organize":
+            if agent_run.mode in {"organize", "application_pack"}:
                 plan = await db.scalar(
                     select(OrganizationPlan)
                     .where(
@@ -180,8 +196,12 @@ async def cancel_task(
         task.status = "cancel_requested"
         task.cancel_requested = True
         task.updated_at = datetime.now(UTC)
+        if export_artifact is not None:
+            export_artifact.state = "cancelled"
+            export_artifact.updated_at = datetime.now(UTC)
+            await release_export_reservation(db, export_artifact)
         if agent_run is not None:
-            if agent_run.mode == "organize":
+            if agent_run.mode in {"organize", "application_pack"}:
                 plan = await db.scalar(
                     select(OrganizationPlan)
                     .where(

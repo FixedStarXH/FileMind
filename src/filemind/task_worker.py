@@ -618,6 +618,10 @@ def execute_task(task_id: str) -> None:
         try:
             if claimed.kind == "document_purge":
                 _purge_document(engine, claimed)
+            elif claimed.kind == "export":
+                from filemind.export_runtime import build_export
+
+                build_export(engine, claimed)
             elif claimed.kind == "parse":
                 _parse_document(engine, claimed)
             elif claimed.kind == "agent_run":

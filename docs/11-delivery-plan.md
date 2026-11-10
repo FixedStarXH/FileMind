@@ -13,7 +13,7 @@
 | M5 | 中文全文、BGE向量、混合检索 | M4 | 三组检索对照评测；`feat: add hybrid document retrieval` |
 | M6 | DeepSeek adapter、LangGraph QA、引用、SSE | M5 | 引用正确定位、断线回放、缺Key处理；`feat: add cited document assistant` |
 | M7 | 整理方案、审批、事务执行、审计 | M6 | 版本冲突、双击审批、重放不重复写；`feat: add approved file organization` |
-| M8 | 求职资料包、缺项提示、ZIP和过期清理 | M7 | manifest一致、源文件删除使下载失效；`feat: generate application document packs` |
+| M8（已完成） | 求职资料包、缺项提示、ZIP和过期清理 | M7 | manifest一致、源文件删除使下载失效；`feat: generate application document packs` |
 | M9 | 响应式联调、完整E2E、性能与安全复核 | M8 | Edge/手机视口关键路径，真实评测；`test: verify release workflows and evaluation` |
 | M10 | 部署、恢复演练、演示数据、说明书 | M9 | 新环境按README部署、备份恢复；`docs: deliver deployment and demo guide` |
 

@@ -2,11 +2,11 @@
 
 ## 1. 运行拓扑
 
-Windows 开发机使用 Docker Desktop/WSL2 的 Linux 容器；浏览器用 Edge。正式部署为单台 Linux 主机 + Docker Compose，前端与 API 同源。Compose 启动独立 ingestion、Agent 与维护 worker；Nginx 和 export worker 在后续模块加入。
+Windows 开发机使用 Docker Desktop/WSL2 的 Linux 容器；浏览器用 Edge。正式部署为单台 Linux 主机 + Docker Compose，前端与 API 同源。Compose 启动独立 ingestion、Agent 与维护 worker；M8 的 ZIP 导出由维护 worker 执行，dispatcher 定期清理过期或失效产物。
 
-服务：nginx、api、worker-ingestion、worker-agent、worker-export、worker-maintenance、dispatcher、postgres、redis、migrate。M5 ingestion worker 单并发、3 GiB 内存限制、业务文件卷只读；专用模型卷只对 ingestion worker 可写，API 只读。RapidOCR 模型随锁定 Python 包安装；首次 BGE 索引会从固定 revision 下载约95 MB ONNX 模型至模型卷，后续离线复用。API 与 worker 以非 root 用户运行。
+服务：nginx、api、worker-ingestion、worker-agent、worker-maintenance、dispatcher、postgres、redis、migrate。M5 ingestion worker 单并发、3 GiB 内存限制、业务文件卷只读；专用模型卷只对 ingestion worker 可写，API 只读。RapidOCR 模型随锁定 Python 包安装；首次 BGE 索引会从固定 revision 下载约95 MB ONNX 模型至模型卷，后续离线复用。API 与 worker 以非 root 用户运行。
 
-默认 OCR 并发1、Agent并发2、导出并发1；API数据库池5+overflow5，worker每进程独立小池。参考资源4核8GiB，推荐开发机为容器预留至少8GiB，首次安装和大PDF需实测内存，不能把参考配置当保证。
+默认 OCR 并发1、Agent并发2、导出并发1；API数据库池5+overflow5，worker每进程独立小池。单份导出上限500MiB，用户总存储配额同时覆盖源文件和导出 ZIP。参考资源4核8GiB，推荐开发机为容器预留至少8GiB，首次安装和大PDF需实测内存，不能把参考配置当保证。
 
 M0 已确认 Docker 可用，但尚未验证 OCR 与向量模型的峰值内存；在 M4/M5 按实际机器资源决定并发数。若机器无法分配上述资源，再讨论降低模型/并发或使用服务器。
 
