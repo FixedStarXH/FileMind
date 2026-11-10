@@ -98,6 +98,18 @@ export default function ApplicationPacks({ csrf, aiEnabled, hasDeepSeek, onLibra
     return () => { live = false; window.clearInterval(timer); };
   }, [runId, run?.status]);
 
+  const hasActiveExports = exports.some((item) => item.state === "queued" || item.state === "running");
+  useEffect(() => {
+    if (!hasActiveExports) return;
+    let live = true;
+    const timer = window.setInterval(() => {
+      void request<{ items: Export[] }>("/exports?limit=50")
+        .then((result) => { if (live) setExports(result.data.items); })
+        .catch(() => undefined);
+    }, 2000);
+    return () => { live = false; window.clearInterval(timer); };
+  }, [hasActiveExports]);
+
   async function createPlan(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError(""); setNotice(""); setPlan(null); setRun(null); setRunId("");
     try {
