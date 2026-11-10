@@ -31,7 +31,7 @@ uv run uvicorn filemind.main:app --app-dir src --reload
 
 基础 API 默认监听 `http://127.0.0.1:8000`。本地 Python 进程与 Compose API 容器不能同时占用该端口，切换时先停止另一进程。`/health/live` 检查进程，`/health/ready` 在数据库、Redis、文件目录全部可用时返回就绪。DeepSeek Key 可留空，健康检查会显示 `not_configured`。
 
-账户初始化：API 容器运行且迁移完成后，在终端执行 `docker compose exec api /app/.venv/bin/filemind create-user student@example.com`，按提示输入至少12位密码。启动前端开发服务器：
+用户可在网页选择“注册新账户”，使用邮箱和至少12位密码自行注册；默认最多20个账户，可通过 `.env` 的 `REGISTRATION_MAX_USERS` 调整，也可通过 `REGISTRATION_ENABLED=false` 关闭。管理员仍可在终端执行 `docker compose exec api /app/.venv/bin/filemind create-user student@example.com` 创建账户。启动前端开发服务器：
 
 ```powershell
 cd frontend
@@ -72,6 +72,7 @@ npm run dev
 | [23 M9 验证记录](docs/23-m9-validation.md) | Edge 端到端、手机视口、安全边界、性能与模型评测限制 |
 | [24 M10 验证记录](docs/24-m10-validation.md) | 生产前端容器、合成演示资料、备份恢复和部署验收 |
 | [25 使用流程手册](docs/25-user-guide.md) | 登录、上传、检索、整理、导出与常见问题 |
+| [26 M11 验证记录](docs/26-m11-validation.md) | 网页注册、双账户会话和 Edge 页面验收 |
 | [配置模板](.env.example) | 无真实密钥的目标配置；应用实现后生效 |
 
 先阅读 01、02、07 确认产品与使用体验，再按 03 → 04 → 05 → 06 进入实现。规格冲突以 01 的产品范围与 05 的外部契约为准，并同步修订所有受影响文档。

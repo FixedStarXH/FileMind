@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     session_secret: SecretStr | None = None
     session_cookie_name: str = "filemind_session"
     session_ttl_days: int = 7
+    registration_enabled: bool = True
+    registration_max_users: int = 20
     storage_root: Path = Path("./data/files")
     model_cache_dir: Path = Path("./data/models")
 
@@ -93,6 +95,7 @@ class Settings(BaseSettings):
         "deepseek_connect_timeout_seconds",
         "deepseek_read_timeout_seconds",
         "task_lease_seconds",
+        "registration_max_users",
         "run_max_llm_calls",
         "run_max_tool_calls",
         "run_max_input_tokens",

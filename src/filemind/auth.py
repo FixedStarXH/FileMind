@@ -26,6 +26,18 @@ class LoginBody(BaseModel):
         return value.strip().casefold()
 
 
+class RegisterBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: EmailStr
+    password: str = Field(min_length=12, max_length=256)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        return value.strip().casefold()
+
+
 class PasswordBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

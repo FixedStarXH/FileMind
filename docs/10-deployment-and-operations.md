@@ -26,7 +26,7 @@ Nginx 提供 SPA 路由回退、52 MB 上传上限、API 反向代理和 SSE 禁
    npm run dev
    ```
 
-5. 通过 `docker compose exec api /app/.venv/bin/filemind create-user <email>` 创建首个账户。密码通过终端交互输入，不作为命令参数传递。
+5. 用户可在网页注册新账户；管理员也可通过 `docker compose exec api /app/.venv/bin/filemind create-user <email>` 创建账户。公开部署前设置 `REGISTRATION_MAX_USERS`，需要暂停注册时设 `REGISTRATION_ENABLED=false` 并重建 API 容器。
 
 生产部署将 `.env` 设置为 `APP_ENV=production`、`APP_ORIGIN=https://实际域名`，并设置 `WEB_BIND=127.0.0.1:8080`，然后运行：
 

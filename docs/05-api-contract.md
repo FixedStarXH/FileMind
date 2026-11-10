@@ -18,6 +18,7 @@
 
 | 方法与路径 | 输入/说明 | 成功响应 |
 |---|---|---|
+| POST /auth/register | `{email,password}`，同源 Origin；注册开关、Redis 限流和人数上限 | 201 `{user,csrf_token}` + Cookie |
 | POST /auth/login | `{email,password}` | 200 `{user,csrf_token}` + Cookie |
 | GET /auth/me | Cookie | 200 `{user,csrf_token}` |
 | POST /auth/logout | CSRF | 204，撤销 Cookie |
@@ -68,7 +69,7 @@
 
 `GET /health/live` 只检测进程；`GET /health/ready` 检测 DB、broker、文件卷可用，不返回密钥。DeepSeek 缺 Key 不影响基础 readiness；capabilities 表明哪些功能可用。
 
-账户仅由管理员 CLI 创建，不开放公开注册。初始化命令为 `filemind create-user <email>`；密码通过交互提示输入两次，不作为命令行参数保存。写接口要求会话 Cookie、CSRF header 和精确匹配 `APP_ORIGIN` 的 Origin。M1 登录限流按邮箱与客户端 IP 分别计数，15分钟最多10次/邮箱、30次/IP；Redis 不可用时拒绝登录。
+用户可在网页以邮箱和至少12位密码注册；注册成功后直接建立登录会话。`REGISTRATION_ENABLED=false` 可关闭网页注册，`REGISTRATION_MAX_USERS` 默认20；达到上限或注册关闭返回403。邮箱冲突返回409。注册按邮箱每小时最多5次、来源IP每小时最多60次限流；Redis 不可用时拒绝注册。管理员仍可通过 `filemind create-user <email>` 创建账户，密码交互输入。登录按邮箱与客户端 IP 分别计数，15分钟最多10次/邮箱、30次/IP；Redis 不可用时拒绝登录。注册和登录都要求精确匹配 `APP_ORIGIN` 的 Origin；已登录写接口还要求会话 Cookie 和 CSRF header。
 
 **M2/M3 阶段接口边界**：M2 曾同步接收文件并同步永久删除。M3 起上传和新增版本返回202，原始 blob 与元数据在同一数据库事务中提交，并创建 parse task/outbox；解析 task 状态为 queued、stage=`waiting_parser`，M3 dispatcher 暂不将它投递给 Celery，M4 提供解析 Worker 后再启用。M3 永久删除返回202，文件立即标记 purging 并禁止访问，当前解析任务会收到取消请求；后台 Worker 等待解析租约结束后清除 blob 与元数据。202 只表示请求已持久接收，不表示解析或删除已完成。
 

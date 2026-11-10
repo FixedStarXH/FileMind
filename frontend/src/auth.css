@@ -1,0 +1,4 @@
+.auth-mode-switch { display: flex; gap: 8px; padding: 4px; margin: 0 0 24px; border-radius: 7px; background: #edf1eb; }
+.auth-mode-switch button { flex: 1; min-height: 42px; border: 0; border-radius: 5px; background: transparent; color: #5b685d; font-size: 13px; font-weight: 600; }
+.auth-mode-switch button.is-active { background: #fffefa; color: #264333; box-shadow: 0 1px 4px #243a2b14; }
+.auth-mode-switch button:focus-visible { outline: 2px solid #365b45; outline-offset: 2px; }

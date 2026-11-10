@@ -6,6 +6,7 @@ import Organizer from "./Organizer";
 import TaskCenter from "./TaskCenter";
 import ApplicationPacks from "./ApplicationPacks";
 import { request } from "./api";
+import "./auth.css";
 
 type User = { id: string; email: string };
 type AccountSettings = {
@@ -18,12 +19,15 @@ type AccountSettings = {
 const errorText: Record<string, string> = {
   AUTH_REQUIRED: "登录状态已失效，请重新登录。",
   INVALID_OLD_PASSWORD: "当前密码不正确。",
-  VALIDATION_ERROR: "新密码至少需要12个字符。",
+  VALIDATION_ERROR: "请检查邮箱格式和密码长度。",
   INVALID_CREDENTIALS: "邮箱或密码不正确。",
   RATE_LIMITED: "尝试次数过多，请稍后再试。",
   LOGIN_SERVICE_UNAVAILABLE: "登录服务暂不可用，请稍后重试。",
   CSRF_INVALID: "请求校验失败，请刷新页面后重试。",
   AI_NOT_CONFIGURED: "管理员还没有配置 DeepSeek API Key。",
+  EMAIL_ALREADY_REGISTERED: "该邮箱已注册，请直接登录。",
+  REGISTRATION_CLOSED: "当前暂停新用户注册，请联系管理员。",
+  REGISTRATION_UNAVAILABLE: "注册服务暂不可用，请稍后重试。",
 };
 
 function formatBytes(bytes: number): string {
@@ -37,6 +41,8 @@ export default function App() {
   const [csrf, setCsrf] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [registerConfirm, setRegisterConfirm] = useState("");
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -77,6 +83,32 @@ export default function App() {
       setSettings(account.data);
     } catch (cause) {
       setError(errorText[(cause as Error).message] ?? "暂时无法登录，请稍后再试。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitRegister(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    if (password.length < 12) { setError("注册密码至少需要 12 个字符。"); return; }
+    if (password !== registerConfirm) { setError("两次输入的密码不一致。"); return; }
+    setBusy(true);
+    try {
+      const result = await request<{ user: User; csrf_token: string }>("/auth/register", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      });
+      setUser(result.data.user);
+      setView("library");
+      setCsrf(result.data.csrf_token);
+      setPassword("");
+      setRegisterConfirm("");
+      const account = await request<AccountSettings>("/settings");
+      setSettings(account.data);
+    } catch (cause) {
+      setError(errorText[(cause as Error).message] ?? "暂时无法注册，请稍后再试。");
     } finally {
       setBusy(false);
     }
@@ -255,18 +287,23 @@ export default function App() {
       </aside>
       <section className="login-panel">
         <div className="login-form-wrap">
-          <div className="eyebrow">欢迎回来</div>
-          <h2>登录你的资料库</h2>
-          <p className="form-intro">输入管理员为你创建的账户信息。</p>
-          <form onSubmit={submitLogin} noValidate>
+          <div className="eyebrow">{authMode === "login" ? "欢迎回来" : "欢迎加入"}</div>
+          <h2>{authMode === "login" ? "登录你的资料库" : "创建你的资料库"}</h2>
+          <p className="form-intro">{authMode === "login" ? "输入邮箱和密码，继续管理你的资料。" : "注册后即可拥有独立的私人资料空间。"}</p>
+          <div className="auth-mode-switch" aria-label="账户入口">
+            <button type="button" className={authMode === "login" ? "is-active" : ""} onClick={() => { setAuthMode("login"); setError(""); setPassword(""); setRegisterConfirm(""); }}>登录</button>
+            <button type="button" className={authMode === "register" ? "is-active" : ""} onClick={() => { setAuthMode("register"); setError(""); setPassword(""); setRegisterConfirm(""); }}>注册新账户</button>
+          </div>
+          <form onSubmit={authMode === "login" ? submitLogin : submitRegister} noValidate>
             <label htmlFor="email">邮箱</label>
             <input id="email" type="email" autoComplete="username" required maxLength={320} value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" />
-            <div className="password-label"><label htmlFor="password">密码</label></div>
-            <div className="password-field"><input id="password" type={showPassword ? "text" : "password"} autoComplete="current-password" required maxLength={256} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="输入密码" /><button type="button" className="reveal-button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? "隐藏密码" : "显示密码"}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
+            <div className="password-label"><label htmlFor="password">{authMode === "register" ? "设置密码（至少 12 位）" : "密码"}</label></div>
+            <div className="password-field"><input id="password" type={showPassword ? "text" : "password"} autoComplete={authMode === "register" ? "new-password" : "current-password"} required minLength={authMode === "register" ? 12 : 1} maxLength={256} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={authMode === "register" ? "至少 12 个字符" : "输入密码"} /><button type="button" className="reveal-button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? "隐藏密码" : "显示密码"}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
+            {authMode === "register" && <><div className="password-label"><label htmlFor="register-confirm">再次输入密码</label></div><input id="register-confirm" type="password" autoComplete="new-password" required maxLength={256} value={registerConfirm} onChange={(event) => setRegisterConfirm(event.target.value)} placeholder="确认密码" /></>}
             {error && <p className="feedback error" role="alert">{error}</p>}
-            <button className="submit-button" type="submit" disabled={busy || !email || !password}>{busy ? "正在验证…" : "登录资料库"}<ArrowRight size={17} /></button>
+            <button className="submit-button" type="submit" disabled={busy || !email || !password || (authMode === "register" && !registerConfirm)}>{busy ? "正在处理…" : authMode === "register" ? "创建账户并进入资料库" : "登录资料库"}<ArrowRight size={17} /></button>
           </form>
-          <div className="login-note"><ShieldCheck size={16} /><span>仅限受邀账户访问，资料默认保持私密。</span></div>
+          <div className="login-note"><ShieldCheck size={16} /><span>每个账户都有独立的私人资料空间。</span></div>
           {notice && <p className="feedback success" role="status">{notice}</p>}
         </div>
         <div className="panel-footer"><span>FILEMIND</span><span>安全登录 · 私人资料空间</span></div>

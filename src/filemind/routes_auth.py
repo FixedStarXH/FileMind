@@ -5,10 +5,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from redis.asyncio import Redis
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from filemind.auth import Auth, LoginBody, PasswordBody, SettingsPatch, WriteAuth
+from filemind.auth import Auth, LoginBody, PasswordBody, RegisterBody, SettingsPatch, WriteAuth
 from filemind.config import get_settings
 from filemind.database import get_db
 from filemind.models import Session, User
@@ -73,6 +74,87 @@ def set_session_cookie(response: Response, raw_token: str) -> None:
         path="/",
         max_age=config.session_ttl_days * 86400,
     )
+
+
+async def enforce_register_limits(request: Request, email: str) -> None:
+    config = get_settings()
+    if not config.redis_url:
+        raise HTTPException(503, "REGISTRATION_UNAVAILABLE")
+    client = Redis.from_url(config.redis_url, socket_connect_timeout=1)
+    try:
+        ip = request.client.host if request.client else "unknown"
+        for key, maximum in (
+            (f"register:email:{token_hash(email)}", 5),
+            (f"register:ip:{token_hash(ip)}", 60),
+        ):
+            count = await client.incr(key)
+            if count == 1:
+                await client.expire(key, 3600)
+            if count > maximum:
+                raise HTTPException(429, "RATE_LIMITED", headers={"Retry-After": "3600"})
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, "REGISTRATION_UNAVAILABLE") from exc
+    finally:
+        await client.aclose()
+
+
+@router.post("/auth/register", status_code=status.HTTP_201_CREATED)
+async def register(
+    body: RegisterBody,
+    request: Request,
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, object]:
+    config = get_settings()
+    if not config.registration_enabled:
+        raise HTTPException(403, "REGISTRATION_CLOSED")
+    if request.headers.get("origin", "").rstrip("/") != config.app_origin.rstrip("/"):
+        raise HTTPException(403, "CSRF_INVALID")
+    if not config.has_session_secret or config.session_secret is None:
+        raise HTTPException(503, "REGISTRATION_UNAVAILABLE")
+    await enforce_register_limits(request, body.email)
+
+    try:
+        # Serializes the configured account cap across concurrent registration requests.
+        await db.execute(text("SELECT pg_advisory_xact_lock(72938165)"))
+        count = await db.scalar(select(func.count()).select_from(User))
+        if count is not None and count >= config.registration_max_users:
+            raise HTTPException(403, "REGISTRATION_CLOSED")
+        existing = await db.scalar(select(User.id).where(User.email == body.email))
+        if existing is not None:
+            raise HTTPException(409, "EMAIL_ALREADY_REGISTERED")
+
+        user = User(
+            email=body.email,
+            password_hash=hash_password(body.password),
+            quota_bytes=config.user_quota_bytes,
+            used_bytes=0,
+            reserved_bytes=0,
+            ai_enabled=False,
+        )
+        db.add(user)
+        await db.flush()
+        raw_token = new_token()
+        csrf = csrf_token(raw_token, config.session_secret.get_secret_value())
+        db.add(
+            Session(
+                user_id=user.id,
+                token_hash=token_hash(raw_token),
+                csrf_hash=token_hash(csrf),
+                expires_at=datetime.now(UTC) + timedelta(days=config.session_ttl_days),
+            )
+        )
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(409, "EMAIL_ALREADY_REGISTERED") from exc
+    set_session_cookie(response, raw_token)
+    return {
+        "data": {"user": user_payload(user), "csrf_token": csrf},
+        "request_id": request.state.request_id,
+    }
 
 
 @router.post("/auth/login")
