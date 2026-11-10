@@ -13,7 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from filemind.agent_events import append_event_async
 from filemind.auth import Auth, WriteAuth
 from filemind.database import get_db
-from filemind.models import AgentRun, BackgroundTask, Document, DocumentVersion
+from filemind.models import (
+    AgentRun,
+    Approval,
+    BackgroundTask,
+    Document,
+    DocumentVersion,
+    OrganizationPlan,
+)
 from filemind.task_contracts import enqueue_task, task_payload
 
 router = APIRouter(prefix="/api/v1", tags=["tasks"])
@@ -132,6 +139,26 @@ async def cancel_task(
         if agent_run is not None:
             agent_run.status = "cancelled"
             agent_run.finished_at = datetime.now(UTC)
+            if agent_run.mode == "organize":
+                plan = await db.scalar(
+                    select(OrganizationPlan)
+                    .where(
+                        OrganizationPlan.run_id == agent_run.id,
+                        OrganizationPlan.owner_id == agent_run.owner_id,
+                    )
+                    .with_for_update()
+                )
+                if plan is not None and plan.status not in ("completed", "rejected"):
+                    plan.status = "cancelled"
+                    plan.updated_at = datetime.now(UTC)
+                    approval = await db.scalar(
+                        select(Approval)
+                        .where(Approval.plan_id == plan.id, Approval.owner_id == plan.owner_id)
+                        .with_for_update()
+                    )
+                    if approval is not None and approval.execution_status == "queued":
+                        approval.execution_status = "cancelled"
+                        approval.finished_at = datetime.now(UTC)
             await append_event_async(
                 db,
                 agent_run,
@@ -154,6 +181,18 @@ async def cancel_task(
         task.cancel_requested = True
         task.updated_at = datetime.now(UTC)
         if agent_run is not None:
+            if agent_run.mode == "organize":
+                plan = await db.scalar(
+                    select(OrganizationPlan)
+                    .where(
+                        OrganizationPlan.run_id == agent_run.id,
+                        OrganizationPlan.owner_id == agent_run.owner_id,
+                    )
+                    .with_for_update()
+                )
+                if plan is not None and plan.status == "approved":
+                    plan.status = "cancelled"
+                    plan.updated_at = datetime.now(UTC)
             await append_event_async(
                 db,
                 agent_run,

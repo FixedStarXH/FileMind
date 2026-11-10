@@ -1,6 +1,6 @@
 # 05 HTTP 接口契约
 
-设计版本 v1；前缀 `/api/v1`。M1 已实现账户、会话和设置端点；M2 已实现文件夹、标签、文件和版本生命周期接口；M3 已实现持久任务与 Outbox。其余接口是后续模块契约。FastAPI OpenAPI 会随实现逐模块校验。
+设计版本 v1；前缀 `/api/v1`。M1 已实现账户、会话和设置端点；M2 已实现文件夹、标签、文件和版本生命周期接口；M3 已实现持久任务与 Outbox；M4–M7 已实现解析检索、问答、资料整理审批与审计。其余接口是后续模块契约。FastAPI OpenAPI 会随实现逐模块校验。
 
 ## 1. 通用约定
 
@@ -50,7 +50,7 @@
 | GET /conversations | 游标 | 200 列表 |
 | GET /conversations/{id} | — | 200 会话、消息与引用 |
 | DELETE /conversations/{id} | 取消关联活动任务后清理 | 202 `{task_id}` |
-| POST /agent/runs | M6: `{mode:"qa",conversation_id,instruction,scope}` | 202 `{run_id,status,events_url}`；Key 未配置503 `AI_NOT_CONFIGURED`；账户未启用AI返回403 |
+| POST /agent/runs | `{mode:"qa"|"organize",conversation_id?,instruction,scope}`；organize 必须有限范围 | 202 `{run_id,status,events_url}`；Key 未配置503 `AI_NOT_CONFIGURED`；账户未启用AI返回403 |
 | GET /agent/runs/{id} | — | 200 RunDetail |
 | GET /agent/runs/{id}/events | SSE；Last-Event-ID? | 200 text/event-stream |
 | POST /agent/runs/{id}/cancel | `{}` | 202 `{status:"cancel_requested"}` |
@@ -63,7 +63,7 @@
 | GET /tasks/{id} | — | 200 task |
 | POST /tasks/{id}/cancel | queued/running | 202 task；终态409 |
 | POST /tasks/{id}/retry | failed/cancelled，原资源可用 | 202 新 task，含 retry_of |
-| GET /audit-events | resource_id?,cursor? | 200 列表 |
+| GET /audit-events | `resource_id?`, `cursor?`, `limit=20`（1–100）；仅当前账户事件，按 created_at/id 倒序 | 200 `{items,next_cursor}`；不返回正文 |
 
 `GET /health/live` 只检测进程；`GET /health/ready` 检测 DB、broker、文件卷可用，不返回密钥。DeepSeek 缺 Key 不影响基础 readiness；capabilities 表明哪些功能可用。
 

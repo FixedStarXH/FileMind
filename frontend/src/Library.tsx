@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type
 import {
   Archive, ArrowDownUp, Check, ChevronDown, ChevronRight, Clock3, Eye, FileArchive, FileImage,
   FileText, Folder, FolderPlus, HardDrive, Heart, LoaderCircle, LogOut, MoreHorizontal,
-  MessageSquareText, Plus, Search, Settings2, ShieldCheck, Star, Tag as TagIcon, Trash2, Upload, X,
+  MessageSquareText, Plus, Search, Settings2, ShieldCheck, Star, Tag as TagIcon, Trash2, Upload, WandSparkles, X,
 } from "lucide-react";
 import { request, uploadFile } from "./api";
 const DocumentPreview = lazy(() => import("./DocumentPreview"));
@@ -121,10 +121,10 @@ function fileIcon(mime: string | null) {
 }
 
 export default function Library({
-  user, settings, csrf, busy, setBusy, onSettings, onTasks, onAssistant, onLogout,
+  user, settings, csrf, busy, setBusy, onSettings, onTasks, onAssistant, onOrganizer, onLogout,
 }: {
   user: User; settings: Settings; csrf: string; busy: boolean; setBusy: (value: boolean) => void;
-  onSettings: () => void; onTasks: () => void; onAssistant: () => void; onLogout: () => void;
+  onSettings: () => void; onTasks: () => void; onAssistant: () => void; onOrganizer: () => void; onLogout: () => void;
 }) {
   const [folders, setFolders] = useState<FolderItem[]>([]);
   const [tags, setTags] = useState<TagItem[]>([]);
@@ -553,6 +553,7 @@ export default function Library({
           <button className={`nav-item ${stateFilter === "trashed" ? "is-active" : ""}`} onClick={goToTrash}><Trash2 size={16} />回收站</button>
           <button className="nav-item" onClick={onTasks}><Clock3 size={16} />任务中心</button>
           <button className="nav-item assistant-nav-item" onClick={onAssistant}><MessageSquareText size={16} />AI 问答</button>
+          <button className="nav-item assistant-nav-item" onClick={onOrganizer}><WandSparkles size={16} />资料整理</button>
         </nav>
         <div className="side-section-heading"><span>文件夹</span><button onClick={() => openDialog({ kind: "folder" })} aria-label="新建文件夹"><Plus size={16} /></button></div>
         <div className="folder-tree">{renderFolderTree(null)}</div>

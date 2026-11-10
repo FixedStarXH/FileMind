@@ -1,6 +1,9 @@
 """Private, citation-first QA conversations and resumable run streams."""
 
 import asyncio
+import base64
+import binascii
+import hashlib
 import json
 import re
 from collections.abc import AsyncIterator
@@ -8,23 +11,27 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, cast
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from filemind.agent_events import append_event_async
-from filemind.agent_schemas import ConversationCreate, RunCreate
+from filemind.agent_schemas import ApprovalCreate, ConversationCreate, RunCreate
 from filemind.auth import Auth, WriteAuth
 from filemind.config import get_settings
 from filemind.database import get_db
+from filemind.http_contracts import idempotency_key
 from filemind.models import (
     AgentRun,
+    Approval,
+    AuditEvent,
     BackgroundTask,
     Citation,
     Conversation,
     Document,
     Message,
+    OrganizationPlan,
     RunStep,
     StreamEvent,
     User,
@@ -34,7 +41,7 @@ from filemind.search_schemas import SearchRequest
 from filemind.task_contracts import enqueue_task
 
 router = APIRouter(prefix="/api/v1", tags=["assistant"])
-_TERMINAL_RUN_STATES = {"succeeded", "failed", "cancelled"}
+_TERMINAL_RUN_STATES = {"succeeded", "failed", "cancelled", "expired"}
 
 
 def _conversation_payload(conversation: Conversation) -> dict[str, object]:
@@ -178,13 +185,25 @@ async def create_run(
         raise HTTPException(403, "AI_DISABLED")
     if not config.has_deepseek_key:
         raise HTTPException(503, "AI_NOT_CONFIGURED")
-    conversation = await db.scalar(
-        select(Conversation)
-        .where(Conversation.id == body.conversation_id, Conversation.owner_id == owner.id)
-        .with_for_update()
-    )
-    if conversation is None:
-        raise HTTPException(404, "RESOURCE_NOT_FOUND")
+    if body.mode == "organize" and (
+        body.scope.all_documents
+        or not (
+            body.scope.document_ids
+            or body.scope.folder_ids
+            or body.scope.tag_ids
+            or body.scope.inbox
+        )
+    ):
+        raise HTTPException(422, "FINITE_SCOPE_REQUIRED")
+    conversation: Conversation | None = None
+    if body.conversation_id is not None:
+        conversation = await db.scalar(
+            select(Conversation)
+            .where(Conversation.id == body.conversation_id, Conversation.owner_id == owner.id)
+            .with_for_update()
+        )
+        if conversation is None:
+            raise HTTPException(404, "RESOURCE_NOT_FOUND")
     await _scope_predicate(
         db,
         owner.id,
@@ -193,10 +212,25 @@ async def create_run(
     active_count = await db.scalar(
         select(func.count())
         .select_from(AgentRun)
-        .where(AgentRun.owner_id == owner.id, AgentRun.status.in_(("queued", "running")))
+        .where(
+            AgentRun.owner_id == owner.id,
+            AgentRun.status.in_(("queued", "running", "awaiting_approval")),
+        )
     )
     if int(active_count or 0) >= config.agent_concurrency:
         raise HTTPException(429, "RATE_LIMITED", headers={"Retry-After": "30"})
+    if conversation is not None:
+        conversation_active = await db.scalar(
+            select(func.count())
+            .select_from(AgentRun)
+            .where(
+                AgentRun.owner_id == owner.id,
+                AgentRun.conversation_id == conversation.id,
+                AgentRun.status.in_(("queued", "running", "awaiting_approval")),
+            )
+        )
+        if int(conversation_active or 0):
+            raise HTTPException(409, "CONVERSATION_BUSY")
     daily_count = await db.scalar(
         select(func.count())
         .select_from(AgentRun)
@@ -209,6 +243,17 @@ async def create_run(
         raise HTTPException(429, "RATE_LIMITED", headers={"Retry-After": "3600"})
 
     now = datetime.now(UTC)
+    if conversation is None:
+        conversation = Conversation(
+            id=uuid4(),
+            owner_id=owner.id,
+            title=body.instruction.strip()[:80] or "资料整理",
+            scope=cast(dict[str, object], body.scope.model_dump(mode="json")),
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(conversation)
+        await db.flush()
     run_id = uuid4()
     run = AgentRun(
         id=run_id,
@@ -221,7 +266,7 @@ async def create_run(
         graph_thread_id=str(uuid4()),
         budget={"llm_calls": 0, "tool_calls": 0, "max_llm_calls": config.run_max_llm_calls},
         model=config.deepseek_model,
-        prompt_version="filemind-qa-1",
+        prompt_version="filemind-qa-1" if body.mode == "qa" else "filemind-organize-1",
         next_event_seq=2,
         created_at=now,
     )
@@ -240,7 +285,7 @@ async def create_run(
         )
     )
     conversation.updated_at = now
-    if conversation.title == "新的问答":
+    if body.mode == "qa" and conversation.title == "新的问答":
         conversation.title = run.instruction[:80]
     db.add(
         StreamEvent(
@@ -254,7 +299,7 @@ async def create_run(
                 "run_id": str(run.id),
                 "seq": 1,
                 "stage": "queued",
-                "message": "已加入问答队列",
+                "message": "已加入问答队列" if body.mode == "qa" else "已加入整理队列",
             },
             created_at=now,
         )
@@ -311,6 +356,16 @@ async def get_run(
             _citation_payload(c, title=title, state=state, current_version_id=current)
             for c, title, state, current in rows.all()
         ]
+    plan_id = (
+        await db.scalar(
+            select(OrganizationPlan.id)
+            .where(OrganizationPlan.run_id == run.id, OrganizationPlan.owner_id == run.owner_id)
+            .order_by(OrganizationPlan.revision.desc())
+            .limit(1)
+        )
+        if run.mode == "organize"
+        else None
+    )
     return {
         "data": {
             "id": str(run.id),
@@ -330,6 +385,7 @@ async def get_run(
             ],
             "answer": run.answer,
             "citations": citations,
+            "plan_id": str(plan_id) if plan_id else None,
             "usage": run.token_usage,
             "budget": run.budget,
             "degraded": bool(run.budget.get("degraded_search", False)),
@@ -341,6 +397,308 @@ async def get_run(
         },
         "request_id": request.state.request_id,
     }
+
+
+def _plan_payload(plan: OrganizationPlan) -> dict[str, object]:
+    return {
+        "id": str(plan.id),
+        "run_id": str(plan.run_id),
+        "revision": plan.revision,
+        "plan_hash": plan.plan_hash,
+        "status": plan.status,
+        "expires_at": plan.expires_at.isoformat(),
+        "actions": plan.actions,
+    }
+
+
+@router.get("/agent/runs/{run_id}/plan")
+async def get_run_plan(
+    run_id: UUID,
+    request: Request,
+    auth: Auth,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, object]:
+    run = await _owned_run(db, auth[0].id, run_id)
+    plan = await db.scalar(
+        select(OrganizationPlan)
+        .where(OrganizationPlan.run_id == run.id, OrganizationPlan.owner_id == run.owner_id)
+        .order_by(OrganizationPlan.revision.desc())
+        .limit(1)
+    )
+    if plan is None:
+        raise HTTPException(404, "PLAN_NOT_READY")
+    return {"data": _plan_payload(plan), "request_id": request.state.request_id}
+
+
+def _audit_cursor(created_at: datetime, event_id: UUID) -> str:
+    raw = f"{created_at.isoformat()}|{event_id}".encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _parse_audit_cursor(value: str) -> tuple[datetime, UUID]:
+    try:
+        padding = "=" * (-len(value) % 4)
+        decoded = base64.urlsafe_b64decode(value + padding).decode()
+        created_at_text, event_id_text = decoded.split("|", 1)
+        created_at = datetime.fromisoformat(created_at_text)
+        event_id = UUID(event_id_text)
+        if created_at.tzinfo is None:
+            raise ValueError("cursor timestamp must include timezone")
+        return created_at, event_id
+    except (ValueError, UnicodeDecodeError, binascii.Error):
+        raise HTTPException(400, "CURSOR_INVALID") from None
+
+
+@router.get("/audit-events")
+async def list_audit_events(
+    request: Request,
+    auth: Auth,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    resource_id: UUID | None = None,
+    cursor: str | None = None,
+    limit: int = Query(default=20, ge=1, le=100),
+) -> dict[str, object]:
+    query = select(AuditEvent).where(AuditEvent.owner_id == auth[0].id)
+    if resource_id is not None:
+        query = query.where(AuditEvent.resource_id == resource_id)
+    if cursor is not None:
+        created_at, event_id = _parse_audit_cursor(cursor)
+        query = query.where(
+            or_(
+                AuditEvent.created_at < created_at,
+                (AuditEvent.created_at == created_at) & (AuditEvent.id < event_id),
+            )
+        )
+    rows = list(
+        (
+            await db.scalars(
+                query.order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc()).limit(limit + 1)
+            )
+        ).all()
+    )
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    next_cursor = _audit_cursor(page[-1].created_at, page[-1].id) if has_more and page else None
+    return {
+        "data": {
+            "items": [
+                {
+                    "id": str(event.id),
+                    "action": event.action,
+                    "resource_type": event.resource_type,
+                    "resource_id": str(event.resource_id),
+                    "request_id": event.request_id,
+                    "details": event.details,
+                    "created_at": event.created_at.isoformat(),
+                }
+                for event in page
+            ],
+            "next_cursor": next_cursor,
+        },
+        "request_id": request.state.request_id,
+    }
+
+
+@router.post("/agent/runs/{run_id}/approval", status_code=status.HTTP_202_ACCEPTED)
+async def submit_approval(
+    run_id: UUID,
+    body: ApprovalCreate,
+    request: Request,
+    auth: WriteAuth,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    idempotency_header: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> dict[str, object]:
+    key = idempotency_key(idempotency_header)
+    request_data = {
+        "plan_id": str(body.plan_id),
+        "plan_hash": body.plan_hash,
+        "decision": body.decision,
+        "selected_action_ids": sorted(body.selected_action_ids),
+    }
+    request_hash = hashlib.sha256(
+        json.dumps(request_data, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    run = await db.scalar(
+        select(AgentRun)
+        .where(AgentRun.id == run_id, AgentRun.owner_id == auth[0].id)
+        .with_for_update()
+    )
+    if run is None or run.mode != "organize":
+        raise HTTPException(404, "RESOURCE_NOT_FOUND")
+    plan = await db.scalar(
+        select(OrganizationPlan)
+        .where(
+            OrganizationPlan.id == body.plan_id,
+            OrganizationPlan.run_id == run.id,
+            OrganizationPlan.owner_id == auth[0].id,
+        )
+        .with_for_update()
+    )
+    if plan is None:
+        raise HTTPException(404, "PLAN_NOT_READY")
+    prior = await db.scalar(
+        select(Approval)
+        .where(Approval.plan_id == plan.id, Approval.owner_id == auth[0].id)
+        .with_for_update()
+    )
+    if prior is not None:
+        if prior.request_key == key and prior.request_hash == request_hash:
+            return {
+                "data": prior.response_body,
+                "request_id": request.state.request_id,
+            }
+        raise HTTPException(409, "ALREADY_DECIDED")
+    now = datetime.now(UTC)
+    if plan.plan_hash != body.plan_hash or plan.status != "awaiting_approval":
+        raise HTTPException(409, "STALE_PLAN")
+    if plan.expires_at <= now:
+        plan.status = "expired"
+        run.status = "expired"
+        run.error_code = "PLAN_EXPIRED"
+        run.finished_at = now
+        await append_event_async(
+            db,
+            run,
+            "run.expired",
+            "terminal",
+            {"status": "expired", "error": "PLAN_EXPIRED"},
+        )
+        await db.commit()
+        raise HTTPException(409, "PLAN_EXPIRED")
+    known = {str(item.get("id")) for item in plan.actions}
+    if any(item not in known for item in body.selected_action_ids):
+        raise HTTPException(422, "ACTION_NOT_IN_PLAN")
+    if body.decision == "approve":
+        owner = await db.scalar(select(User).where(User.id == auth[0].id).with_for_update())
+        if owner is None or not owner.ai_enabled:
+            raise HTTPException(403, "AI_DISABLED")
+        action_map = {str(item["id"]): item for item in plan.actions}
+        document_ids = sorted(
+            {UUID(str(action_map[item]["document_id"])) for item in body.selected_action_ids},
+            key=str,
+        )
+        docs = list(
+            await db.scalars(
+                select(Document)
+                .where(
+                    Document.owner_id == auth[0].id,
+                    Document.id.in_(document_ids),
+                    Document.state == "active",
+                )
+                .order_by(Document.id)
+                .with_for_update()
+            )
+        )
+        by_id = {item.id: item for item in docs}
+        stale = set(by_id) != set(document_ids)
+        for action_id in body.selected_action_ids:
+            action = action_map[action_id]
+            document = by_id.get(UUID(str(action["document_id"])))
+            if document is None or (
+                document.metadata_revision != int(cast(int, action["expected_revision"]))
+                or (str(document.current_version_id) if document.current_version_id else None)
+                != action.get("version_id")
+            ):
+                stale = True
+        if stale:
+            plan.status = "stale"
+            plan.updated_at = now
+            run.status = "failed"
+            run.error_code = "STALE_PLAN"
+            run.finished_at = now
+            await append_event_async(
+                db,
+                run,
+                "run.failed",
+                "terminal",
+                {"status": "failed", "error": "STALE_PLAN"},
+            )
+            db.add(
+                AuditEvent(
+                    owner_id=auth[0].id,
+                    actor_id=auth[0].id,
+                    action="organization.plan.stale",
+                    resource_type="plan",
+                    resource_id=plan.id,
+                    request_id=request.state.request_id,
+                    details={"reason": "document_changed"},
+                )
+            )
+            await db.commit()
+            raise HTTPException(409, "STALE_PLAN")
+
+    approval_id = uuid4()
+    if body.decision == "reject":
+        plan.status = "rejected"
+        plan.updated_at = now
+        run.status = "cancelled"
+        run.finished_at = now
+        execution_status = "rejected"
+        response_data: dict[str, object] = {
+            "run_id": str(run.id),
+            "status": "cancelled",
+            "approval_id": str(approval_id),
+        }
+        await append_event_async(
+            db,
+            run,
+            "run.cancelled",
+            "terminal",
+            {"status": "cancelled", "reason": "approval_rejected"},
+        )
+    else:
+        plan.status = "approved"
+        plan.updated_at = now
+        run.status = "queued"
+        task = enqueue_task(db, auth[0].id, "agent_run", run.id, stage="approved_resume")
+        run.task_id = task.id
+        execution_status = "queued"
+        response_data = {
+            "run_id": str(run.id),
+            "status": "queued",
+            "task_id": str(task.id),
+            "approval_id": str(approval_id),
+        }
+        await append_event_async(
+            db,
+            run,
+            "run.step",
+            "approval.queued",
+            {"stage": "approved", "message": "已确认所选建议，正在应用"},
+        )
+    db.add(
+        Approval(
+            id=approval_id,
+            owner_id=auth[0].id,
+            plan_id=plan.id,
+            plan_hash=plan.plan_hash,
+            selected_action_ids=body.selected_action_ids,
+            decision=body.decision,
+            execution_status=execution_status,
+            request_key=key,
+            request_hash=request_hash,
+            response_status=202,
+            response_body=response_data,
+            decided_at=now,
+        )
+    )
+    db.add(
+        AuditEvent(
+            owner_id=auth[0].id,
+            actor_id=auth[0].id,
+            action="organization.approval.submitted",
+            resource_type="plan",
+            resource_id=plan.id,
+            request_id=request.state.request_id,
+            details={
+                "decision": body.decision,
+                "selected_action_count": len(body.selected_action_ids),
+                "approval_id": str(approval_id),
+            },
+        )
+    )
+    await db.commit()
+    return {"data": response_data, "request_id": request.state.request_id}
 
 
 @router.post("/agent/runs/{run_id}/cancel", status_code=status.HTTP_202_ACCEPTED)
@@ -357,6 +715,24 @@ async def cancel_run(
     )
     if run is None:
         raise HTTPException(404, "RESOURCE_NOT_FOUND")
+    if run.status == "awaiting_approval" and run.mode == "organize":
+        plan = await db.scalar(
+            select(OrganizationPlan)
+            .where(OrganizationPlan.run_id == run.id, OrganizationPlan.owner_id == run.owner_id)
+            .with_for_update()
+        )
+        now = datetime.now(UTC)
+        run.status = "cancelled"
+        run.finished_at = now
+        if plan is not None and plan.status == "awaiting_approval":
+            plan.status = "cancelled"
+            plan.updated_at = now
+        await append_event_async(db, run, "run.cancelled", "terminal", {"status": "cancelled"})
+        await db.commit()
+        return {
+            "data": {"run_id": str(run.id), "status": run.status},
+            "request_id": request.state.request_id,
+        }
     if run.status not in ("queued", "running") or run.task_id is None:
         raise HTTPException(409, "TASK_CONFLICT")
     task = await db.scalar(
@@ -373,10 +749,36 @@ async def cancel_run(
         task.cancel_requested = True
         run.status = "cancelled"
         run.finished_at = now
+        if run.mode == "organize":
+            plan = await db.scalar(
+                select(OrganizationPlan)
+                .where(OrganizationPlan.run_id == run.id, OrganizationPlan.owner_id == run.owner_id)
+                .with_for_update()
+            )
+            if plan is not None and plan.status not in ("completed", "rejected"):
+                plan.status = "cancelled"
+                plan.updated_at = now
+                approval = await db.scalar(
+                    select(Approval)
+                    .where(Approval.plan_id == plan.id, Approval.owner_id == plan.owner_id)
+                    .with_for_update()
+                )
+                if approval is not None and approval.execution_status == "queued":
+                    approval.execution_status = "cancelled"
+                    approval.finished_at = now
         await append_event_async(db, run, "run.cancelled", "terminal", {"status": "cancelled"})
     elif task.status == "running":
         task.status = "cancel_requested"
         task.cancel_requested = True
+        if run.mode == "organize":
+            plan = await db.scalar(
+                select(OrganizationPlan)
+                .where(OrganizationPlan.run_id == run.id, OrganizationPlan.owner_id == run.owner_id)
+                .with_for_update()
+            )
+            if plan is not None and plan.status == "approved":
+                plan.status = "cancelled"
+                plan.updated_at = now
         await append_event_async(
             db,
             run,

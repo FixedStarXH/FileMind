@@ -394,8 +394,11 @@ class AgentRun(Base):
         ForeignKeyConstraint(["task_id"], ["tasks.id"], ondelete="SET NULL"),
         UniqueConstraint("owner_id", "id"),
         UniqueConstraint("graph_thread_id"),
-        CheckConstraint("mode IN ('qa')"),
-        CheckConstraint("status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')"),
+        CheckConstraint("mode IN ('qa', 'organize')"),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'awaiting_approval', 'succeeded', "
+            "'failed', 'cancelled', 'expired')"
+        ),
         CheckConstraint("next_event_seq > 0"),
         Index("ix_agent_runs_owner_created", "owner_id", "created_at", "id"),
         Index("ix_agent_runs_owner_status", "owner_id", "status"),
@@ -403,7 +406,7 @@ class AgentRun(Base):
 
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     owner_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
-    conversation_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    conversation_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
     mode: Mapped[str] = mapped_column(String(24), nullable=False)
     instruction: Mapped[str] = mapped_column(Text, nullable=False)
     scope: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
@@ -519,4 +522,104 @@ class StreamEvent(Base):
     event_key: Mapped[str] = mapped_column(String(160), nullable=False)
     event_type: Mapped[str] = mapped_column(String(40), nullable=False)
     payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class OrganizationPlan(Base):
+    __tablename__ = "plans"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["owner_id", "run_id"], ["agent_runs.owner_id", "agent_runs.id"], ondelete="CASCADE"
+        ),
+        UniqueConstraint("owner_id", "id"),
+        UniqueConstraint("run_id", "revision"),
+        CheckConstraint("revision > 0"),
+        CheckConstraint(
+            "status IN ('awaiting_approval', 'approved', 'rejected', 'stale', "
+            "'completed', 'expired', 'cancelled', 'failed')"
+        ),
+        Index("ix_plans_owner_expiry", "owner_id", "expires_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    owner_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    run_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    plan_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    actions: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="awaiting_approval", nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Approval(Base):
+    __tablename__ = "approvals"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["owner_id", "plan_id"], ["plans.owner_id", "plans.id"], ondelete="CASCADE"
+        ),
+        UniqueConstraint("owner_id", "id"),
+        UniqueConstraint("plan_id"),
+        CheckConstraint("decision IN ('approve', 'reject')"),
+        CheckConstraint(
+            "execution_status IN ('queued', 'applied', 'failed', 'rejected', 'cancelled')"
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    owner_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    plan_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    plan_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    selected_action_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    execution_status: Mapped[str] = mapped_column(String(24), default="queued", nullable=False)
+    request_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    response_status: Mapped[int] = mapped_column(Integer, nullable=False)
+    response_body: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PlanActionExecution(Base):
+    __tablename__ = "plan_action_executions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["owner_id", "approval_id"], ["approvals.owner_id", "approvals.id"], ondelete="CASCADE"
+        ),
+        ForeignKeyConstraint(
+            ["owner_id", "run_id"], ["agent_runs.owner_id", "agent_runs.id"], ondelete="CASCADE"
+        ),
+        ForeignKeyConstraint(
+            ["owner_id", "document_id"], ["documents.owner_id", "documents.id"], ondelete="CASCADE"
+        ),
+    )
+
+    approval_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    action_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    run_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    document_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    action_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    applied_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AuditEvent(Base):
+    __tablename__ = "audit_events"
+    __table_args__ = (
+        ForeignKeyConstraint(["owner_id"], ["users.id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(["actor_id"], ["users.id"], ondelete="CASCADE"),
+        CheckConstraint("details = details - 'content' - 'quote' - 'text'"),
+        Index("ix_audit_events_owner_created", "owner_id", "created_at", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    owner_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    actor_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    action: Mapped[str] = mapped_column(String(80), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    resource_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    request_id: Mapped[str | None] = mapped_column(String(64))
+    details: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

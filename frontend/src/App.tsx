@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { ArrowRight, Check, Eye, EyeOff, FileText, HardDrive, KeyRound, LogOut, ShieldCheck } from "lucide-react";
 import Library from "./Library";
 import Assistant from "./Assistant";
+import Organizer from "./Organizer";
 import TaskCenter from "./TaskCenter";
 import { request } from "./api";
 
@@ -42,7 +43,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [view, setView] = useState<"library" | "tasks" | "settings" | "assistant">("library");
+  const [view, setView] = useState<"library" | "tasks" | "settings" | "assistant" | "organizer">("library");
 
   async function loadAccount() {
     const me = await request<{ user: User; csrf_token: string }>("/auth/me");
@@ -157,6 +158,7 @@ export default function App() {
         onSettings={() => setView("settings")}
         onTasks={() => setView("tasks")}
         onAssistant={() => setView("assistant")}
+        onOrganizer={() => setView("organizer")}
         onLogout={() => void logout()}
       />
     );
@@ -168,6 +170,10 @@ export default function App() {
 
   if (user && settings && view === "assistant") {
     return <Assistant userEmail={user.email} settings={settings} csrf={csrf} onLibrary={() => setView("library")} onSettings={() => setView("settings")} onLogout={() => void logout()} />;
+  }
+
+  if (user && settings && view === "organizer") {
+    return <Organizer csrf={csrf} hasDeepSeek={settings.capabilities.deepseek} aiEnabled={settings.ai_enabled} onLibrary={() => setView("library")} onSettings={() => setView("settings")} onLogout={() => void logout()} />;
   }
 
   if (user && settings) {

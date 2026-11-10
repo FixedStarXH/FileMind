@@ -25,6 +25,7 @@ from filemind.config import get_settings
 from filemind.embeddings import embed_texts
 from filemind.models import (
     AgentRun,
+    Approval,
     BackgroundTask,
     Chunk,
     Citation,
@@ -34,6 +35,7 @@ from filemind.models import (
     DocumentVersion,
     Folder,
     Message,
+    OrganizationPlan,
     StreamEvent,
     User,
 )
@@ -545,19 +547,36 @@ def remove_run_checkpoint(engine: Engine, thread_id: str) -> None:
         checkpointer.delete_thread(thread_id)
 
 
+def _runs_referencing_source(session: Session, owner_id: UUID, document_id: UUID) -> set[UUID]:
+    run_ids = set(
+        session.scalars(
+            select(Citation.run_id).where(
+                Citation.owner_id == owner_id,
+                Citation.document_id == document_id,
+            )
+        )
+    )
+    for plan in session.scalars(
+        select(OrganizationPlan).where(OrganizationPlan.owner_id == owner_id)
+    ):
+        if any(str(action.get("document_id")) == str(document_id) for action in plan.actions):
+            run_ids.add(plan.run_id)
+    return run_ids
+
+
 def cancel_active_runs_for_source(engine: Engine, owner_id: UUID, document_id: UUID) -> bool:
-    """Request cancellation of QA runs that have persisted evidence from this source."""
+    """Cancel or fence active QA and organization runs that refer to this source."""
     now = datetime.now(UTC)
     still_running = False
     with Session(engine) as session, session.begin():
-        run_ids = select(Citation.run_id).where(
-            Citation.owner_id == owner_id,
-            Citation.document_id == document_id,
-        )
+        run_ids = _runs_referencing_source(session, owner_id, document_id)
         runs = list(
             session.scalars(
                 select(AgentRun)
-                .where(AgentRun.id.in_(run_ids), AgentRun.status.in_(("queued", "running")))
+                .where(
+                    AgentRun.id.in_(run_ids),
+                    AgentRun.status.in_(("queued", "running", "awaiting_approval")),
+                )
                 .with_for_update()
             )
         )
@@ -570,15 +589,24 @@ def cancel_active_runs_for_source(engine: Engine, owner_id: UUID, document_id: U
                 )
                 .with_for_update()
             )
-            if task is None:
+            plan = session.scalar(
+                select(OrganizationPlan)
+                .where(OrganizationPlan.run_id == run.id, OrganizationPlan.owner_id == owner_id)
+                .with_for_update()
+            )
+            if run.status == "awaiting_approval" or task is None or task.status == "succeeded":
                 run.status = "cancelled"
+                run.error_code = "SOURCE_REMOVED"
                 run.finished_at = now
+                if plan is not None:
+                    plan.status = "stale"
+                    plan.updated_at = now
                 append_event(
                     session,
                     run,
                     "run.cancelled",
                     "terminal",
-                    {"status": "cancelled"},
+                    {"status": "cancelled", "reason": "source_removed"},
                 )
                 continue
             if task.status == "queued":
@@ -587,7 +615,11 @@ def cancel_active_runs_for_source(engine: Engine, owner_id: UUID, document_id: U
                 task.cancel_requested = True
                 task.updated_at = now
                 run.status = "cancelled"
+                run.error_code = "SOURCE_REMOVED"
                 run.finished_at = now
+                if plan is not None:
+                    plan.status = "stale"
+                    plan.updated_at = now
                 append_event(
                     session,
                     run,
@@ -599,6 +631,9 @@ def cancel_active_runs_for_source(engine: Engine, owner_id: UUID, document_id: U
                 task.status = "cancel_requested"
                 task.cancel_requested = True
                 task.updated_at = now
+                if plan is not None:
+                    plan.status = "stale"
+                    plan.updated_at = now
                 append_event(
                     session,
                     run,
@@ -630,10 +665,7 @@ def redact_runs_for_source(
     document_id: UUID,
     now: datetime,
 ) -> None:
-    run_ids = select(Citation.run_id).where(
-        Citation.owner_id == owner_id,
-        Citation.document_id == document_id,
-    )
+    run_ids = _runs_referencing_source(session, owner_id, document_id)
     runs = list(
         session.scalars(
             select(AgentRun)
@@ -643,6 +675,25 @@ def redact_runs_for_source(
     )
     for run in runs:
         remove_run_checkpoint(engine, run.graph_thread_id)
+        plan = session.scalar(
+            select(OrganizationPlan)
+            .where(OrganizationPlan.run_id == run.id, OrganizationPlan.owner_id == owner_id)
+            .with_for_update()
+        )
+        if plan is not None:
+            plan.actions = []
+            plan.status = "stale"
+            plan.updated_at = now
+            approval = session.scalar(
+                select(Approval)
+                .where(Approval.plan_id == plan.id, Approval.owner_id == owner_id)
+                .with_for_update()
+            )
+            if approval is not None:
+                approval.selected_action_ids = []
+                if approval.execution_status == "queued":
+                    approval.execution_status = "cancelled"
+                    approval.finished_at = now
         run.answer = None
         run.error_code = "SOURCE_REMOVED"
         session.execute(
@@ -759,6 +810,8 @@ def _finalize_success(engine: Engine, claimed: AgentClaim, state: QAState) -> No
         )
         if task is None or run is None or task.cancel_requested:
             raise AgentFailure("TASK_CANCELLED" if task is not None else "TASK_LEASE_LOST")
+        if run.conversation_id is None:
+            raise AgentFailure("RESOURCE_NOT_FOUND")
         conversation = session.scalar(
             select(Conversation).where(
                 Conversation.id == run.conversation_id,
@@ -865,6 +918,28 @@ def _finalize_failure(engine: Engine, claimed: AgentClaim, code: str) -> None:
                 "terminal",
                 {"status": run.status, "error": run.error_code},
             )
+            if run.mode == "organize":
+                plan = session.scalar(
+                    select(OrganizationPlan)
+                    .where(
+                        OrganizationPlan.run_id == run.id, OrganizationPlan.owner_id == run.owner_id
+                    )
+                    .with_for_update()
+                )
+                if plan is not None and plan.status not in ("completed", "rejected"):
+                    plan.status = (
+                        "stale" if code == "STALE_PLAN" else "cancelled" if cancelled else "failed"
+                    )
+                    plan.updated_at = now
+                if plan is not None:
+                    approval = session.scalar(
+                        select(Approval)
+                        .where(Approval.plan_id == plan.id, Approval.owner_id == run.owner_id)
+                        .with_for_update()
+                    )
+                    if approval is not None and approval.execution_status == "queued":
+                        approval.execution_status = "cancelled" if cancelled else "failed"
+                        approval.finished_at = now
         if task is not None:
             task.status = (
                 "cancelled" if code == "TASK_CANCELLED" or task.cancel_requested else "failed"
@@ -888,14 +963,25 @@ def run_agent_task(engine: Engine, claimed: AgentClaim) -> None:
         )
         if run is None:
             raise AgentFailure("RESOURCE_NOT_FOUND")
-        initial: QAState = {
-            "run_id": str(run.id),
-            "owner_id": str(run.owner_id),
-            "graph_thread_id": run.graph_thread_id,
-            "instruction": run.instruction,
-            "scope": run.scope,
-        }
+        organizing = run.mode == "organize"
+        if organizing:
+            initial: QAState = {}
+        else:
+            if run.conversation_id is None:
+                raise AgentFailure("RESOURCE_NOT_FOUND")
+            initial = {
+                "run_id": str(run.id),
+                "owner_id": str(run.owner_id),
+                "graph_thread_id": run.graph_thread_id,
+                "instruction": run.instruction,
+                "scope": run.scope,
+            }
         graph_thread_id = run.graph_thread_id
+    if organizing:
+        from filemind.agent_organization import run_organization_task
+
+        run_organization_task(engine, claimed)
+        return
     try:
         if not get_settings().has_deepseek_key:
             raise AgentFailure("AI_NOT_CONFIGURED")
