@@ -17,6 +17,12 @@ type AccountSettings = {
   capabilities: { deepseek: boolean; keyword_search: boolean; vector_search: boolean };
 };
 type CitationTarget = { document_id: string; version_id: string; title?: string; locator: Record<string, unknown> };
+type AppView = "library" | "tasks" | "settings" | "assistant" | "organizer" | "packs";
+const validViews = new Set<AppView>(["library", "tasks", "settings", "assistant", "organizer", "packs"]);
+function viewFromPath(pathname: string): AppView {
+  const segment = pathname.split("/").filter(Boolean)[0] ?? "library";
+  return validViews.has(segment as AppView) ? segment as AppView : "library";
+}
 const errorText: Record<string, string> = {
   AUTH_REQUIRED: "登录状态已失效，请重新登录。",
   INVALID_OLD_PASSWORD: "当前密码不正确。",
@@ -51,20 +57,30 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [view, setView] = useState<"library" | "tasks" | "settings" | "assistant" | "organizer" | "packs">("library");
+  const [view, setViewState] = useState<AppView>(() => viewFromPath(window.location.pathname));
   const [citationTarget, setCitationTarget] = useState<CitationTarget | null>(null);
+
+  function navigate(nextView: AppView, replace = false) {
+    setViewState(nextView);
+    const path = nextView === "library" ? "/" : `/${nextView}`;
+    if (window.location.pathname !== path) {
+      window.history[replace ? "replaceState" : "pushState"]({ view: nextView }, "", path);
+    }
+  }
 
   async function loadAccount() {
     const me = await request<{ user: User; csrf_token: string }>("/auth/me");
     const account = await request<AccountSettings>("/settings");
     setUser(me.data.user);
-    setView("library");
     setCsrf(me.data.csrf_token);
     setSettings(account.data);
   }
 
   useEffect(() => {
     void loadAccount().catch(() => undefined);
+    const onPopState = () => setViewState(viewFromPath(window.location.pathname));
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
   async function submitLogin(event: FormEvent<HTMLFormElement>) {
@@ -78,7 +94,7 @@ export default function App() {
         body: JSON.stringify({ email, password }),
       });
       setUser(result.data.user);
-      setView("library");
+      navigate("library", true);
       setCsrf(result.data.csrf_token);
       setPassword("");
       const account = await request<AccountSettings>("/settings");
@@ -103,7 +119,7 @@ export default function App() {
         body: JSON.stringify({ email, password }),
       });
       setUser(result.data.user);
-      setView("library");
+      navigate("library", true);
       setCsrf(result.data.csrf_token);
       setPassword("");
       setRegisterConfirm("");
@@ -190,11 +206,11 @@ export default function App() {
         csrf={csrf}
         busy={busy}
         setBusy={setBusy}
-        onSettings={() => setView("settings")}
-        onTasks={() => setView("tasks")}
-        onAssistant={() => setView("assistant")}
-        onOrganizer={() => setView("organizer")}
-        onApplicationPacks={() => setView("packs")}
+        onSettings={() => navigate("settings")}
+        onTasks={() => navigate("tasks")}
+        onAssistant={() => navigate("assistant")}
+        onOrganizer={() => navigate("organizer")}
+        onApplicationPacks={() => navigate("packs")}
         citationTarget={citationTarget}
         onLogout={() => void logout()}
       />
@@ -202,19 +218,19 @@ export default function App() {
   }
 
   if (user && settings && view === "tasks") {
-    return <TaskCenter csrf={csrf} onLibrary={() => setView("library")} onSettings={() => setView("settings")} onLogout={() => void logout()} />;
+    return <TaskCenter csrf={csrf} onLibrary={() => navigate("library")} onSettings={() => navigate("settings")} onLogout={() => void logout()} />;
   }
 
   if (user && settings && view === "assistant") {
-    return <Assistant userEmail={user.email} settings={settings} csrf={csrf} onLibrary={() => setView("library")} onOpenCitation={(citation) => { setCitationTarget(citation); setView("library"); }} onSettings={() => setView("settings")} onLogout={() => void logout()} />;
+    return <Assistant userEmail={user.email} settings={settings} csrf={csrf} onLibrary={() => navigate("library")} onOpenCitation={(citation) => { setCitationTarget(citation); navigate("library"); }} onSettings={() => navigate("settings")} onLogout={() => void logout()} />;
   }
 
   if (user && settings && view === "organizer") {
-    return <Organizer csrf={csrf} hasDeepSeek={settings.capabilities.deepseek} aiEnabled={settings.ai_enabled} onLibrary={() => setView("library")} onSettings={() => setView("settings")} onLogout={() => void logout()} />;
+    return <Organizer csrf={csrf} hasDeepSeek={settings.capabilities.deepseek} aiEnabled={settings.ai_enabled} onLibrary={() => navigate("library")} onSettings={() => navigate("settings")} onLogout={() => void logout()} />;
   }
 
   if (user && settings && view === "packs") {
-    return <ApplicationPacks csrf={csrf} aiEnabled={settings.ai_enabled} hasDeepSeek={settings.capabilities.deepseek} onLibrary={() => setView("library")} onSettings={() => setView("settings")} onLogout={() => void logout()} />;
+    return <ApplicationPacks csrf={csrf} aiEnabled={settings.ai_enabled} hasDeepSeek={settings.capabilities.deepseek} onLibrary={() => navigate("library")} onSettings={() => navigate("settings")} onLogout={() => void logout()} />;
   }
 
   if (user && settings) {
@@ -224,7 +240,7 @@ export default function App() {
       <main className="account-shell">
         <header className="account-topbar">
           <a className="brand" href="#home"><span className="brand-mark"><FileText size={18} /></span>知档</a>
-          <button className="quiet-button" onClick={() => setView("library")}><FileText size={16} /><span>返回资料库</span></button>
+          <button className="quiet-button" onClick={() => navigate("library")}><FileText size={16} /><span>返回资料库</span></button>
           <span className="account-email">{user.email}</span>
           <button className="quiet-button" onClick={() => void logout()} disabled={busy} aria-label="退出登录"><LogOut size={17} /><span>退出</span></button>
         </header>
