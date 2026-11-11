@@ -67,3 +67,4 @@
 .slide-layout-text{color:#253b2b;font-size:clamp(10px,1.8cqw,24px);line-height:1.25;white-space:pre-wrap;overflow-wrap:anywhere}
 .slide-extracted-heading{margin-top:28px;padding-bottom:8px;border-bottom:1px solid #dce5da;color:#3b5845;font-size:13px;font-weight:700}
 .slide-media-warning{margin:10px 0 0;color:#795b2d;font-size:13px;line-height:1.5}
+.page-jump{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;color:#405647;font-size:12px}.page-jump input{width:54px;height:32px;padding:0 5px;border:1px solid #d9e2d8;border-radius:5px;background:#fffefa;color:#304a37;text-align:center;font:inherit}.page-jump input:focus{outline:3px solid #365b4520;border-color:#78917d}.page-jump button{height:32px;padding:0 9px;border:1px solid #dce5dc;border-radius:5px;background:#edf2eb;color:#365b45;font-size:11px;font-weight:600}.page-jump button:disabled{opacity:.45;cursor:not-allowed}

@@ -66,6 +66,7 @@ export default function DocumentPreview({
 }: { versionId: string; versionLabel: string; initialLocator?: Record<string, unknown> | null; onClose: () => void }) {
   const [data, setData] = useState<PreviewData | null>(null);
   const [page, setPage] = useState(1);
+  const [pageDraft, setPageDraft] = useState("1");
   const [loading, setLoading] = useState(true);
   const [pageLoading, setPageLoading] = useState(false);
   const [moreLoading, setMoreLoading] = useState(false);
@@ -115,6 +116,7 @@ export default function DocumentPreview({
     setVisualError("");
     setData(null);
     setPage(1);
+    setPageDraft("1");
     setSelectedBlock(null);
     const source = initialLocator?.source && typeof initialLocator.source === "object"
       ? initialLocator.source as Record<string, unknown>
@@ -129,6 +131,7 @@ export default function DocumentPreview({
           : initial;
         if (active && token === requestId.current) {
           setPage(isPaged(initial.kind) ? targetPage : 1);
+          setPageDraft(String(isPaged(initial.kind) ? targetPage : 1));
           setData(firstPage);
           if (!isPaged(initial.kind)) {
             const locatorKey = ["paragraph", "line", "table"].find((key) => typeof source[key] === "number");
@@ -187,6 +190,7 @@ export default function DocumentPreview({
     const token = ++requestId.current;
     const previous = page;
     setPage(next);
+    setPageDraft(String(next));
     setPageLoading(true);
     setMoreLoading(false);
     setSelectedBlock(null);
@@ -195,10 +199,15 @@ export default function DocumentPreview({
       const result = await request<PreviewData>(`/versions/${versionId}/preview?page=${next}&limit=${BLOCK_LIMIT}`);
       if (token === requestId.current) setData(result.data);
     } catch {
-      if (token === requestId.current) { setPage(previous); setError("当前页无法读取，请重试或下载原件。"); }
+      if (token === requestId.current) { setPage(previous); setPageDraft(String(previous)); setError("当前页无法读取，请重试或下载原件。"); }
     } finally {
       if (token === requestId.current) setPageLoading(false);
     }
+  }
+
+  function jumpToPage() {
+    const target = Number(pageDraft);
+    if (Number.isInteger(target) && target >= 1 && target <= pageLimit) void changePage(target);
   }
 
   async function loadMore() {
@@ -238,7 +247,7 @@ export default function DocumentPreview({
 
   const pageControls = data && isPaged(data.kind) && <nav className="preview-page-controls" aria-label={data.kind === "pptx" ? "幻灯片导航" : "PDF 页码导航"}>
     <button type="button" className="outline-button" disabled={page <= 1 || pageLoading} onClick={() => void changePage(page - 1)}><ChevronLeft size={16} />上一页</button>
-    <span aria-live="polite">第 {page} / {pageLimit} {data.kind === "pptx" ? "张" : "页"}</span>
+    <label className="page-jump"><span>第</span><input type="number" inputMode="numeric" min={1} max={pageLimit} value={pageDraft} aria-label={data.kind === "pptx" ? "跳转到第几张幻灯片" : "跳转到第几页"} onChange={(event) => setPageDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); jumpToPage(); } }} /><span>/ {pageLimit} {data.kind === "pptx" ? "张" : "页"}</span><button type="button" onClick={jumpToPage} disabled={pageLoading || !Number.isInteger(Number(pageDraft)) || Number(pageDraft) < 1 || Number(pageDraft) > pageLimit}>跳转</button></label>
     <button type="button" className="outline-button" disabled={page >= pageLimit || pageLoading} onClick={() => void changePage(page + 1)}>下一页<ChevronRight size={16} /></button>
   </nav>;
 
