@@ -279,6 +279,7 @@ async def create_run(
         created_at=now,
     )
     task = enqueue_task(db, owner.id, "agent_run", run_id, stage="queued")
+    await db.flush()
     run.task_id = task.id
     db.add(run)
     if conversation is not None:
@@ -719,6 +720,7 @@ async def submit_approval(
         plan.updated_at = now
         run.status = "queued"
         task = enqueue_task(db, auth[0].id, "agent_run", run.id, stage="approved_resume")
+        await db.flush()
         run.task_id = task.id
         execution_status = "queued"
         response_data = {
