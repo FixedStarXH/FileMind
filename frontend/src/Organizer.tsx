@@ -163,7 +163,7 @@ export default function Organizer({
           <div className="organizer-steps"><span><i>01</i>选择范围</span><b /><span><i>02</i>预览差异</span><b /><span><i>03</i>确认应用</span></div>
         </div>
 
-        {!hasDeepSeek && <div className="organizer-warning"><ShieldCheck size={16} />管理员尚未配置 DeepSeek API Key。资料整理暂不可用。</div>}
+        {!hasDeepSeek && <div className="organizer-warning"><ShieldCheck size={16} /><span>AI 尚未配置：请部署管理员在服务端配置 DeepSeek API Key。你仍可在资料库手动编辑文件名、文件夹和标签。</span><button type="button" onClick={onLibrary}>去资料库手动整理</button></div>}
         {hasDeepSeek && !aiEnabled && <div className="organizer-warning"><ShieldCheck size={16} />请先在账户设置中启用 AI，再生成整理方案。<button type="button" onClick={onSettings}>打开设置</button></div>}
         {error && <div className="organizer-error" role="alert">{error}<button onClick={() => setError("")} aria-label="关闭"><X size={15} /></button></div>}
         {notice && <div className="organizer-notice" role="status"><CheckCircle2 size={15} />{notice}</div>}

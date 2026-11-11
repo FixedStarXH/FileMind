@@ -166,7 +166,7 @@ export default function ApplicationPacks({ csrf, aiEnabled, hasDeepSeek, onLibra
     <section className="packs-content">
       <div className="packs-intro"><div className="packs-kicker">CAREER MATERIALS · PRIVATE WORKSPACE</div><h1>把求职材料，<em>整理成有据可查的一包。</em></h1><p>Agent 只推荐你已上传且完成识别的材料。你检查用途与缺项并确认后，系统才会生成 ZIP；不会替你编造经历或发送给招聘方。</p></div>
       <div className="packs-tabs" role="tablist"><button className={tab === "agent" ? "active" : ""} onClick={() => setTab("agent")}><Sparkles size={16} />智能资料包</button><button className={tab === "manual" ? "active" : ""} onClick={() => setTab("manual")}><Archive size={16} />手动导出</button></div>
-      {!hasDeepSeek && tab === "agent" && <div className="packs-warning"><ShieldCheck size={16} />管理员尚未配置 DeepSeek API Key，智能分析暂不可用。</div>}
+      {!hasDeepSeek && tab === "agent" && <div className="packs-warning"><ShieldCheck size={16} /><span>智能分析需要部署管理员在服务端配置 DeepSeek API Key。你仍可使用手动导出打包已识别的资料。</span><button type="button" onClick={() => setTab("manual")}>使用手动导出</button></div>}
       {hasDeepSeek && !aiEnabled && tab === "agent" && <div className="packs-warning"><ShieldCheck size={16} />请先在账户设置中启用 AI。<button onClick={onSettings}>打开设置</button></div>}
       {error && <div className="packs-error" role="alert">{error}<button onClick={() => setError("")} aria-label="关闭"><X size={15} /></button></div>}
       {notice && <div className="packs-notice" role="status"><CheckCircle2 size={16} />{notice}</div>}
