@@ -323,6 +323,7 @@ export default function App() {
             <button className="submit-button" type="submit" disabled={busy || !email || !password || (authMode === "register" && !registerConfirm)}>{busy ? "正在处理…" : authMode === "register" ? "创建账户并进入资料库" : "登录资料库"}<ArrowRight size={17} /></button>
           </form>
           <div className="login-note"><ShieldCheck size={16} /><span>每个账户都有独立的私人资料空间。</span></div>
+          {authMode === "login" && <p className="password-recovery-note">忘记密码？请联系部署管理员重置。管理员可运行 <code>filemind reset-password &lt;邮箱&gt;</code>；重置后所有旧登录会话都会退出。</p>}
           {notice && <p className="feedback success" role="status">{notice}</p>}
         </div>
         <div className="panel-footer"><span>FILEMIND</span><span>安全登录 · 私人资料空间</span></div>

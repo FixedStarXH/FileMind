@@ -24,6 +24,8 @@ docker compose exec api /app/.venv/bin/filemind create-user your-email@example.c
 
 以后在登录页输入邮箱和密码，点击 **登录资料库**。
 
+忘记密码时，请联系部署管理员重置。管理员在 API 容器中运行 `docker compose exec api /app/.venv/bin/filemind reset-password <email>`，按提示输入并确认至少 12 位新密码。重置会注销该账户的所有现有登录会话。
+
 ## 2. 十分钟走通基础流程
 
 1. **上传资料**：进入 **全部文件**，点击 **上传文件**，选择 `examples/demo/` 里的六份合成 Markdown 文件；也可以拖到资料库。每次最多 20 个文件，单个不超过 50 MiB。
