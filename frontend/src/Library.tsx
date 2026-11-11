@@ -129,6 +129,8 @@ export default function Library({
   const [folders, setFolders] = useState<FolderItem[]>([]);
   const [tags, setTags] = useState<TagItem[]>([]);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const [nextDocumentCursor, setNextDocumentCursor] = useState<string | null>(null);
+  const [loadingMoreDocuments, setLoadingMoreDocuments] = useState(false);
   const [folderFilter, setFolderFilter] = useState<string | null>(null);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [favoriteFilter, setFavoriteFilter] = useState(false);
@@ -209,13 +211,36 @@ export default function Library({
     if (search.trim()) query.set("q", search.trim());
     try {
       const result = await request<{ items: DocumentItem[]; next_cursor: string | null }>(`/documents?${query}`);
-      setDocuments(result.data.items);
+      setDocuments((current) => silent
+        ? [...result.data.items, ...current.filter((document) => !result.data.items.some((fresh) => fresh.id === document.id))]
+        : result.data.items);
+      setNextDocumentCursor(result.data.next_cursor);
     } catch (cause) {
       setError(messageFor(cause));
     } finally {
       if (!silent) setLoading(false);
     }
   }, [folderFilter, favoriteFilter, search, sort, stateFilter, tagFilter]);
+
+  async function loadMoreDocuments() {
+    if (!nextDocumentCursor || loadingMoreDocuments) return;
+    setLoadingMoreDocuments(true);
+    setError("");
+    const query = new URLSearchParams({ state: stateFilter, sort, limit: "100", cursor: nextDocumentCursor });
+    if (folderFilter) query.set("folder_id", folderFilter);
+    if (tagFilter) query.append("tag_ids", tagFilter);
+    if (favoriteFilter) query.set("favorite", "true");
+    if (search.trim()) query.set("q", search.trim());
+    try {
+      const result = await request<{ items: DocumentItem[]; next_cursor: string | null }>(`/documents?${query}`);
+      setDocuments((current) => [...current, ...result.data.items]);
+      setNextDocumentCursor(result.data.next_cursor);
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      setLoadingMoreDocuments(false);
+    }
+  }
 
   const loadSelectedDocument = useCallback(async (documentId: string) => {
     const result = await request<DocumentItem>(`/documents/${documentId}`);
@@ -628,6 +653,7 @@ export default function Library({
                 </div>;
               })}
           </div>
+          {searchHits === null && nextDocumentCursor && <div className="load-more-documents"><button className="secondary-button" onClick={() => void loadMoreDocuments()} disabled={loadingMoreDocuments}>{loadingMoreDocuments && <LoaderCircle className="spin" size={15} />}{loadingMoreDocuments ? "正在加载…" : "加载更多文件"}</button></div>}
           <div className="drop-hint"><Upload size={14} /><span>也可以把文件拖到页面中上传，单次最多20个文件，单个不超过50 MiB。</span></div>
         </div>
 
