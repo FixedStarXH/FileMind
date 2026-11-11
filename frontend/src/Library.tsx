@@ -33,6 +33,7 @@ type SearchHit = {
   document_id: string; version_id: string; chunk_id: string; title: string; snippet: string;
   locator: { source?: { page?: number; paragraph?: number; slide?: number; line?: number } };
 };
+type CitationTarget = { document_id: string; version_id: string; title?: string; locator: Record<string, unknown> };
 type UploadItem = {
   id: string; file: File; status: "waiting" | "uploading" | "done" | "duplicate" | "failed";
   progress: number; message?: string;
@@ -121,10 +122,10 @@ function fileIcon(mime: string | null) {
 }
 
 export default function Library({
-  user, settings, csrf, busy, setBusy, onSettings, onTasks, onAssistant, onOrganizer, onApplicationPacks, onLogout,
+  user, settings, csrf, busy, setBusy, onSettings, onTasks, onAssistant, onOrganizer, onApplicationPacks, citationTarget, onLogout,
 }: {
   user: User; settings: Settings; csrf: string; busy: boolean; setBusy: (value: boolean) => void;
-  onSettings: () => void; onTasks: () => void; onAssistant: () => void; onOrganizer: () => void; onApplicationPacks: () => void; onLogout: () => void;
+  onSettings: () => void; onTasks: () => void; onAssistant: () => void; onOrganizer: () => void; onApplicationPacks: () => void; citationTarget: CitationTarget | null; onLogout: () => void;
 }) {
   const [folders, setFolders] = useState<FolderItem[]>([]);
   const [tags, setTags] = useState<TagItem[]>([]);
@@ -144,6 +145,7 @@ export default function Library({
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [previewVersion, setPreviewVersion] = useState<VersionItem | null>(null);
+  const [previewLocator, setPreviewLocator] = useState<Record<string, unknown> | null>(null);
   const [activeDocument, setActiveDocument] = useState<DocumentItem | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
   const [folderDraft, setFolderDraft] = useState("");
@@ -253,6 +255,16 @@ export default function Library({
 
   useEffect(() => { void loadCatalog(); }, [loadCatalog]);
   useEffect(() => { void loadDocuments(); }, [loadDocuments]);
+  useEffect(() => {
+    if (!citationTarget) return;
+    setSelectedId(citationTarget.document_id);
+    setPreviewLocator(citationTarget.locator);
+    setPreviewVersion({
+      id: citationTarget.version_id, version_no: 0, original_name: citationTarget.title ?? "引用来源",
+      parse_state: "ready", index_mode: null, error_code: null, size_bytes: 0, mime: "",
+      is_current: false, is_latest: false, created_at: "",
+    });
+  }, [citationTarget]);
   useEffect(() => { setSearchHits(null); }, [folderFilter, tagFilter, favoriteFilter, stateFilter]);
 
   useEffect(() => {
@@ -671,7 +683,7 @@ export default function Library({
           </div>
           <div className="detail-section"><div className="detail-section-title"><span>版本记录</span>{stateFilter === "active" && <button className="link-button" onClick={() => versionInput.current?.click()}><Plus size={14} />新版本</button>}</div>
             <input ref={versionInput} type="file" className="visually-hidden" accept=".pdf,.docx,.pptx,.txt,.md,.png,.jpg,.jpeg" onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; if (files.length && activeDocument) void sendFiles(files.slice(0, 1), { versionFor: activeDocument }); }} />
-            <div className="version-list">{(activeDocument.versions ?? []).map((version) => <div className="version-row" key={version.id}><span className="version-number">v{version.version_no}</span><div className="version-main"><strong>{version.original_name}</strong><small>{formatDate(version.created_at)} · {formatParseState(version.parse_state)}</small></div>{version.is_current && <span className="current-label">当前</span>}<button className="download-button" onClick={() => setPreviewVersion(version)} aria-label={`预览版本${version.version_no}`} title="预览"><Eye size={15} /></button><a className="download-button" href={`/api/v1/versions/${version.id}/download`} aria-label={`下载版本${version.version_no}`} title="下载原件"><HardDrive size={15} /></a></div>)}</div>
+            <div className="version-list">{(activeDocument.versions ?? []).map((version) => <div className="version-row" key={version.id}><span className="version-number">v{version.version_no}</span><div className="version-main"><strong>{version.original_name}</strong><small>{formatDate(version.created_at)} · {formatParseState(version.parse_state)}</small></div>{version.is_current && <span className="current-label">当前</span>}<button className="download-button" onClick={() => { setPreviewLocator(null); setPreviewVersion(version); }} aria-label={`预览版本${version.version_no}`} title="预览"><Eye size={15} /></button><a className="download-button" href={`/api/v1/versions/${version.id}/download`} aria-label={`下载版本${version.version_no}`} title="下载原件"><HardDrive size={15} /></a></div>)}</div>
           </div>
           <div className="detail-section detail-state"><div className="detail-section-title">处理状态</div><p><span className={`doc-status ${activeDocument.parse_state === "ready" ? "is-ready" : activeDocument.parse_state === "failed" ? "is-failed" : ""}`}><i />{formatParseState(activeDocument.parse_state)}</span></p><small>{activeDocument.parse_state === "failed" ? parseErrorMessage(activeDocument.error_code) : activeDocument.parse_state === "ready" ? `内容已保存，可预览并全文检索${activeDocument.index_mode === "keyword_only" ? "（当前仅关键词可用）" : ""}。` : "文件正在由本地解析与索引服务处理，完成后预览和搜索会自动更新。"}</small>{activeDocument.parse_state === "failed" && activeDocument.versions?.find((version) => version.id === activeDocument.latest_version_id) && <button className="link-button reprocess-button" onClick={() => void reprocessVersion(activeDocument.versions!.find((version) => version.id === activeDocument.latest_version_id)!)} disabled={busy}><LoaderCircle size={14} />重新解析</button>}</div>
           <div className="detail-footer">{stateFilter === "active" ? <><button className="danger-outline" onClick={() => void moveToTrash(activeDocument)} disabled={busy}><Trash2 size={15} />移入回收站</button><a className="download-full" href={activeDocument.latest_version_id ? `/api/v1/versions/${activeDocument.latest_version_id}/download` : "#"} aria-disabled={!activeDocument.latest_version_id}><HardDrive size={15} />下载原件</a></> : <><button className="secondary-button" onClick={() => void restoreDocument(activeDocument)} disabled={busy}>恢复文件</button><button className="danger-outline" onClick={() => openDialog({ kind: "permanent", document: activeDocument })} disabled={busy}><Trash2 size={15} />永久删除</button></>}</div>
@@ -687,7 +699,7 @@ export default function Library({
               {(dialog.kind === "tag" || dialog.kind === "edit-tag") && <><label className="dialog-label" htmlFor="dialog-color">标签颜色</label><div className="color-input-row"><input id="dialog-color" type="color" value={dialogColor} onChange={(event) => setDialogColor(event.target.value)} /><span>{dialogColor}</span></div></>}
               {error && <p className="feedback error">{error}</p>}<div className="dialog-actions"><button type="button" className="outline-button" onClick={() => setDialog(null)}>取消</button><button className="primary-button" disabled={busy}>{busy ? "正在保存…" : "保存"}</button></div></form>}
       </section></div>}
-      {previewVersion && <Suspense fallback={<div className="preview-backdrop"><div className="preview-loading"><LoaderCircle className="spin" size={23} />正在加载预览组件</div></div>}><DocumentPreview versionId={previewVersion.id} versionLabel={`v${previewVersion.version_no} · ${previewVersion.original_name}`} onClose={() => setPreviewVersion(null)} /></Suspense>}
+      {previewVersion && <Suspense fallback={<div className="preview-backdrop"><div className="preview-loading"><LoaderCircle className="spin" size={23} />正在加载预览组件</div></div>}><DocumentPreview versionId={previewVersion.id} versionLabel={previewVersion.version_no ? `v${previewVersion.version_no} · ${previewVersion.original_name}` : previewVersion.original_name} initialLocator={previewLocator} onClose={() => { setPreviewVersion(null); setPreviewLocator(null); }} /></Suspense>}
     </main>
   );
 }

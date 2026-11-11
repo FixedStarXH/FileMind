@@ -62,8 +62,8 @@ function isPaged(kind: PreviewData["kind"]): boolean {
 }
 
 export default function DocumentPreview({
-  versionId, versionLabel, onClose,
-}: { versionId: string; versionLabel: string; onClose: () => void }) {
+  versionId, versionLabel, initialLocator, onClose,
+}: { versionId: string; versionLabel: string; initialLocator?: Record<string, unknown> | null; onClose: () => void }) {
   const [data, setData] = useState<PreviewData | null>(null);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -116,18 +116,34 @@ export default function DocumentPreview({
     setData(null);
     setPage(1);
     setSelectedBlock(null);
+    const source = initialLocator?.source && typeof initialLocator.source === "object"
+      ? initialLocator.source as Record<string, unknown>
+      : initialLocator ?? {};
+    const pageValue = typeof source.page === "number" ? source.page : source.slide;
+    const targetPage = typeof pageValue === "number" && Number.isInteger(pageValue) && pageValue > 0 ? pageValue : 1;
     void request<PreviewData>(`/versions/${versionId}/preview?limit=${BLOCK_LIMIT}`)
       .then(async (result) => {
         const initial = result.data;
         const firstPage = isPaged(initial.kind)
-          ? (await request<PreviewData>(`/versions/${versionId}/preview?page=1&limit=${BLOCK_LIMIT}`)).data
+          ? (await request<PreviewData>(`/versions/${versionId}/preview?page=${targetPage}&limit=${BLOCK_LIMIT}`)).data
           : initial;
-        if (active && token === requestId.current) setData(firstPage);
+        if (active && token === requestId.current) {
+          setPage(isPaged(initial.kind) ? targetPage : 1);
+          setData(firstPage);
+          if (!isPaged(initial.kind)) {
+            const locatorKey = ["paragraph", "line", "table"].find((key) => typeof source[key] === "number");
+            const match = locatorKey && firstPage.blocks.find((block) => Number(block.locator[locatorKey]) === source[locatorKey]);
+            if (match) {
+              setSelectedBlock(match.id);
+              window.requestAnimationFrame(() => document.getElementById(`preview-block-${match.id}`)?.scrollIntoView({ block: "center" }));
+            }
+          }
+        }
       })
       .catch(() => { if (active) setError("暂时无法读取预览，请稍后重试或下载原件。"); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; requestId.current += 1; };
-  }, [versionId]);
+  }, [initialLocator, versionId]);
 
   useEffect(() => {
     let active = true;

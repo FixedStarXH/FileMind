@@ -16,6 +16,7 @@ type AccountSettings = {
   reserved_bytes: number;
   capabilities: { deepseek: boolean; keyword_search: boolean; vector_search: boolean };
 };
+type CitationTarget = { document_id: string; version_id: string; title?: string; locator: Record<string, unknown> };
 const errorText: Record<string, string> = {
   AUTH_REQUIRED: "登录状态已失效，请重新登录。",
   INVALID_OLD_PASSWORD: "当前密码不正确。",
@@ -51,6 +52,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [view, setView] = useState<"library" | "tasks" | "settings" | "assistant" | "organizer" | "packs">("library");
+  const [citationTarget, setCitationTarget] = useState<CitationTarget | null>(null);
 
   async function loadAccount() {
     const me = await request<{ user: User; csrf_token: string }>("/auth/me");
@@ -193,6 +195,7 @@ export default function App() {
         onAssistant={() => setView("assistant")}
         onOrganizer={() => setView("organizer")}
         onApplicationPacks={() => setView("packs")}
+        citationTarget={citationTarget}
         onLogout={() => void logout()}
       />
     );
@@ -203,7 +206,7 @@ export default function App() {
   }
 
   if (user && settings && view === "assistant") {
-    return <Assistant userEmail={user.email} settings={settings} csrf={csrf} onLibrary={() => setView("library")} onSettings={() => setView("settings")} onLogout={() => void logout()} />;
+    return <Assistant userEmail={user.email} settings={settings} csrf={csrf} onLibrary={() => setView("library")} onOpenCitation={(citation) => { setCitationTarget(citation); setView("library"); }} onSettings={() => setView("settings")} onLogout={() => void logout()} />;
   }
 
   if (user && settings && view === "organizer") {

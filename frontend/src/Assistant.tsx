@@ -44,9 +44,9 @@ function locatorLabel(locator: Record<string, unknown>): string {
 }
 
 export default function Assistant({
-  userEmail, settings, csrf, onLibrary, onSettings, onLogout,
+  userEmail, settings, csrf, onLibrary, onOpenCitation, onSettings, onLogout,
 }: {
-  userEmail: string; settings: Settings; csrf: string; onLibrary: () => void; onSettings: () => void; onLogout: () => void;
+  userEmail: string; settings: Settings; csrf: string; onLibrary: () => void; onOpenCitation: (citation: Citation) => void; onSettings: () => void; onLogout: () => void;
 }) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationId, setConversationId] = useState("");
@@ -244,6 +244,7 @@ export default function Assistant({
       <div className="citation-body">
         <div className="citation-heading"><strong>{citation.title ?? "资料来源"}</strong><span>{locatorLabel(citation.locator)}{citation.historical_version ? " · 历史版本" : ""}</span></div>
         <p>{citation.status === "available" ? citation.quote : citation.status === "trashed" ? "来源已移入回收站。" : "来源已移除。"}</p>
+        {citation.status === "available" && <button className="citation-open" onClick={() => onOpenCitation(citation)}>打开原文</button>}
       </div>
     </article>
   );
