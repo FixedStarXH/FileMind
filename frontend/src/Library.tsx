@@ -150,6 +150,7 @@ export default function Library({
   const [tagDraft, setTagDraft] = useState<string[]>([]);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [uploads, setUploads] = useState<UploadItem[]>([]);
+  const [uploadsExpanded, setUploadsExpanded] = useState(false);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [dialogName, setDialogName] = useState("");
   const [dialogColor, setDialogColor] = useState("#6c7a70");
@@ -289,6 +290,7 @@ export default function Library({
 
   function updateUpload(id: string, update: Partial<UploadItem>) {
     setUploads((current) => current.map((item) => item.id === id ? { ...item, ...update } : item));
+    if (update.status === "failed") setUploadsExpanded(true);
   }
 
   async function sendFiles(files: File[], options: { versionFor?: DocumentItem } = {}) {
@@ -300,7 +302,7 @@ export default function Library({
     const selected = files.map((file) => ({
       id: crypto.randomUUID(), file, status: "waiting" as const, progress: 0,
     }));
-    setUploads((current) => [...selected, ...current].slice(0, 30));
+    setUploads((current) => [...selected, ...current]);
     setError("");
     setNotice("");
     let next = 0;
@@ -627,9 +629,8 @@ export default function Library({
           {notice && <div className="library-notice" role="status"><Check size={15} /><span>{notice}</span><button onClick={() => setNotice("")} aria-label="关闭提示"><X size={15} /></button></div>}
 
           {uploads.length > 0 && <section className="upload-queue" aria-label="上传队列">
-            <div className="upload-queue-heading"><div><strong>上传队列</strong><span>{uploads.filter((item) => item.status === "done" || item.status === "duplicate").length} / {uploads.length} 已完成</span></div><button onClick={() => setUploads((items) => items.filter((item) => item.status === "failed" || item.status === "uploading" || item.status === "waiting"))}>清除已完成</button></div>
-            {uploads.slice(0, 4).map((item) => <div className="upload-item" key={item.id}><div className="upload-item-icon">{fileIcon(null)}</div><div className="upload-item-main"><span>{item.file.name}</span><div className="upload-progress"><span style={{ width: `${item.progress}%` }} /></div></div><small>{item.message ?? (item.status === "uploading" ? `${item.progress}%` : item.status === "waiting" ? "等待中" : "")}</small>{item.status === "failed" && <button className="retry-button" onClick={() => void sendFiles([item.file])}>重试</button>}</div>)}
-            {uploads.length > 4 && <p className="upload-more">另有 {uploads.length - 4} 个上传项目</p>}
+            <div className="upload-queue-heading"><div><strong>上传队列</strong><span>{uploads.filter((item) => item.status === "done" || item.status === "duplicate").length} 已完成 · {uploads.filter((item) => item.status === "failed").length} 失败 · {uploads.filter((item) => item.status === "waiting" || item.status === "uploading").length} 处理中</span></div><div className="upload-queue-controls">{uploads.length > 4 && <button onClick={() => setUploadsExpanded((expanded) => !expanded)}>{uploadsExpanded ? "收起" : `查看全部 ${uploads.length} 项`}</button>}<button onClick={() => setUploads((items) => items.filter((item) => item.status === "failed" || item.status === "uploading" || item.status === "waiting"))}>清除已完成</button></div></div>
+            {(uploadsExpanded ? uploads : uploads.slice(0, 4)).map((item) => <div className="upload-item" key={item.id}><div className="upload-item-icon">{fileIcon(null)}</div><div className="upload-item-main"><span>{item.file.name}</span><div className="upload-progress"><span style={{ width: `${item.progress}%` }} /></div></div><small>{item.message ?? (item.status === "uploading" ? `${item.progress}%` : item.status === "waiting" ? "等待中" : "")}</small>{item.status === "failed" && <button className="retry-button" onClick={() => void sendFiles([item.file])}>重试</button>}</div>)}
           </section>}
 
           <div className="file-toolbar"><div className="file-count">{searchHits !== null ? `${searchBusy ? "正在检索…" : `${searchHits.length} 条正文结果`}` : loading ? "正在读取…" : `${documents.length} 个项目`}{searchDegraded && <span className="search-degraded">向量暂不可用，已退回关键词</span>}{tagFilter && selectedTag && <button className="filter-chip" onClick={() => setTagFilter(null)}><i style={{ background: selectedTag.color }} />{selectedTag.name}<X size={12} /></button>}</div>{searchHits === null && <label className="sort-select"><ArrowDownUp size={14} /><select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} aria-label="排序"><option value="updated_desc">最近更新</option><option value="name_asc">名称 A–Z</option><option value="size_desc">文件大小</option></select></label>}</div>
