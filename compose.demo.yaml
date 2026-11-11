@@ -1,0 +1,30 @@
+# Small, controlled demo on a 2 vCPU / 2 GiB host.
+# Run with: docker compose -f compose.yaml -f compose.demo.yaml --profile production up -d --build
+services:
+  postgres:
+    command: ["postgres", "-c", "shared_buffers=64MB", "-c", "max_connections=30"]
+
+  worker-maintenance:
+    command:
+      - /app/.venv/bin/celery
+      - -A
+      - filemind.celery_app:celery_app
+      - worker
+      - --queues=maintenance
+      - --pool=solo
+      - --concurrency=1
+      - --loglevel=INFO
+
+  worker-ingestion:
+    command:
+      - /app/.venv/bin/celery
+      - -A
+      - filemind.celery_app:celery_app
+      - worker
+      - --queues=ingestion
+      - --pool=solo
+      - --concurrency=1
+      - --loglevel=INFO
+
+  worker-agent:
+    profiles: [ai]

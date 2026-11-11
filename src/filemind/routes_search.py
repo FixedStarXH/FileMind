@@ -14,6 +14,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from starlette.concurrency import run_in_threadpool
 
 from filemind.auth import Auth
+from filemind.config import get_settings
 from filemind.database import get_db
 from filemind.embeddings import embed_texts
 from filemind.models import Chunk, Document, DocumentTag, DocumentVersion, Folder, Tag
@@ -113,6 +114,8 @@ async def search_documents(
     auth: Auth,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, object]:
+    if body.mode == "semantic" and not get_settings().embeddings_enabled:
+        raise HTTPException(503, "SEARCH_UNAVAILABLE")
     owner = auth[0]
     scope_filter = await _scope_predicate(db, owner.id, body)
     filters = [
@@ -172,8 +175,8 @@ async def search_documents(
         ]
 
     query_vector: list[float] | None = None
-    embedding_unavailable = False
-    if body.mode in ("semantic", "hybrid"):
+    embedding_unavailable = body.mode == "hybrid" and not get_settings().embeddings_enabled
+    if body.mode in ("semantic", "hybrid") and get_settings().embeddings_enabled:
         try:
             embeddings = await run_in_threadpool(embed_texts, [body.query], query=True)
             query_vector = embeddings[0]

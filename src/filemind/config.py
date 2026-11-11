@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     embedding_model: str = "BAAI/bge-small-zh-v1.5"
     embedding_model_revision: str = "46fbe35fd4374a00fee7de77dfddaeb6dd6a2c59"
     embedding_dim: int = 512
+    embeddings_enabled: bool = True
     ocr_backend: str = "rapidocr"
 
     max_upload_bytes: int = 52_428_800

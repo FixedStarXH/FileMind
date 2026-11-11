@@ -58,7 +58,7 @@ def make_chunks(
             start_token = end_token - CHUNK_TOKEN_OVERLAP
 
     vectors: list[list[float]] | None = None
-    if prepared:
+    if prepared and get_settings().embeddings_enabled:
         try:
             vectors = embed_texts(text for text, _locator, _count, _search in prepared)
         except Exception as exc:

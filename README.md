@@ -41,7 +41,7 @@ npm run dev
 
 访问 `http://127.0.0.1:5173` 登录。资料库支持上传、下载、重复文件提示、文件夹与标签、版本、收藏及回收站；永久删除由后台任务处理。任务中心可查看、取消或重试任务。文档解析任务提取 PDF、DOCX、PPTX、TXT、Markdown、PNG 和 JPEG，生成页码/段落/幻灯片预览定位和检索索引；PPTX 预览还可查看幻灯片内嵌图片。正文搜索支持 jieba 中文关键词、BGE 语义与混合排序；首次索引会将固定 revision 的本地 ONNX 模型下载到 Docker 模型卷（约95 MB），无网络或模型不可用时关键词检索仍可用。AI 问答可选择全库、收件箱、文件夹或标签范围，答案附可定位引用；连续追问最多带入最近12条未删除消息。资料整理 Agent 可基于有限资料范围生成改名、移动和标签建议，逐项审批后原子应用；审计记录可查询且不保存正文。求职资料包可推荐有证据的材料并提示缺项，审批后异步生成 ZIP；也可手动选择已识别文件导出。产物计入配额，24小时到期或源文件移入回收站后失效并清理。无 DeepSeek Key 时 API 明确返回未配置状态，不创建 AI 任务。
 
-生产静态前端以 `docker compose --profile production up -d --build` 启动，默认仅监听 `127.0.0.1:8080`。将 `.env` 的 `APP_ENV` 设为 `production`、`APP_ORIGIN` 设为对外 HTTPS 源，并在本机 TLS 反向代理后使用；不要直接暴露容器端口。演示材料位于 `examples/demo/`，均为合成数据。加密备份和隔离恢复演练见 [部署与运维](docs/10-deployment-and-operations.md)。
+生产静态前端以 `docker compose --profile production up -d --build` 启动，默认仅监听 `127.0.0.1:8080`。将 `.env` 的 `APP_ENV` 设为 `production`、`APP_ORIGIN` 设为对外 HTTPS 源，并在本机 TLS 反向代理后使用；不要直接暴露容器端口。2 核 2 GiB ECS 的受控演示参见 [阿里云轻量演示部署](docs/29-aliyun-ecs-demo.md)。演示材料位于 `examples/demo/`，均为合成数据。加密备份和隔离恢复演练见 [部署与运维](docs/10-deployment-and-operations.md)。
 
 ## 文档导航
 

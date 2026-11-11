@@ -33,7 +33,7 @@ def settings_payload(user: User) -> dict[str, object]:
         "capabilities": {
             "deepseek": config.has_deepseek_key,
             "keyword_search": True,
-            "vector_search": True,
+            "vector_search": config.embeddings_enabled,
         },
     }
 

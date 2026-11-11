@@ -138,7 +138,7 @@ export default function Library({
   const [stateFilter, setStateFilter] = useState<"active" | "trashed">("active");
   const [sort, setSort] = useState<"updated_desc" | "name_asc" | "size_desc">("updated_desc");
   const [search, setSearch] = useState("");
-  const [searchMode, setSearchMode] = useState<"hybrid" | "keyword" | "semantic">("hybrid");
+  const [searchMode, setSearchMode] = useState<"hybrid" | "keyword" | "semantic">(settings.capabilities.vector_search ? "hybrid" : "keyword");
   const [searchHits, setSearchHits] = useState<SearchHit[] | null>(null);
   const [searchDegraded, setSearchDegraded] = useState(false);
   const [searchBusy, setSearchBusy] = useState(false);
@@ -631,7 +631,7 @@ export default function Library({
           <div className="breadcrumb"><span>我的资料</span><ChevronRight size={14} /><strong>{heading}</strong></div>
           <label className="search-box"><Search size={16} /><input value={search} onChange={(event) => { setSearch(event.target.value); setSearchHits(null); }} onKeyDown={(event) => { if (event.key === "Enter") void runFullTextSearch(); }} placeholder="筛文件名或搜正文…" aria-label="筛选文件名或搜索正文" />{search && <button onClick={() => { setSearch(""); setSearchHits(null); }} aria-label="清除搜索"><X size={14} /></button>}</label>
           <button className="search-body-button" onClick={() => void runFullTextSearch()} disabled={!search.trim() || searchBusy} aria-label="按所选方式搜索正文" title="搜索正文（也可按 Enter）"><Search size={15} /><span>{searchBusy ? "搜索中" : "搜正文"}</span></button>
-          <select className="search-mode-select" value={searchMode} onChange={(event) => { const mode = event.target.value as typeof searchMode; setSearchMode(mode); if (searchHits !== null) void runFullTextSearch(mode); }} aria-label="检索方式"><option value="hybrid">混合</option><option value="keyword">关键词</option><option value="semantic">语义</option></select>
+          {settings.capabilities.vector_search && <select className="search-mode-select" value={searchMode} onChange={(event) => { const mode = event.target.value as typeof searchMode; setSearchMode(mode); if (searchHits !== null) void runFullTextSearch(mode); }} aria-label="检索方式"><option value="hybrid">混合</option><option value="keyword">关键词</option><option value="semantic">语义</option></select>}
           <button className="top-icon-button" onClick={onSettings} aria-label="账户设置"><Settings2 size={18} /></button>
           <button className="top-icon-button" onClick={onLogout} disabled={busy} aria-label="退出登录"><LogOut size={17} /></button>
         </header>
