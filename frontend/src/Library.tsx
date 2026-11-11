@@ -535,6 +535,15 @@ export default function Library({
     setStateFilter("active"); setFolderFilter(null); setFavoriteFilter(false); setTagFilter(null);
   }
 
+  function clearListFilters() {
+    setSearch("");
+    setSearchHits(null);
+    setStateFilter("active");
+    setFolderFilter(null);
+    setFavoriteFilter(false);
+    setTagFilter(null);
+  }
+
   function goToTrash() {
     setStateFilter("trashed"); setFolderFilter(null); setFavoriteFilter(false); setTagFilter(null);
   }
@@ -649,12 +658,12 @@ export default function Library({
 
           <div className="document-table" onDragOver={(event) => event.preventDefault()} onDrop={onDrop}>
             <div className="table-head"><span>名称</span><span>状态</span><span>大小</span><span>更新日期</span><span></span></div>
-            {searchHits !== null ? searchBusy ? <div className="table-placeholder"><LoaderCircle className="spin" size={20} />正在检索正文</div> : searchHits.length === 0 ? <div className="empty-library"><div className="empty-icon"><Search size={22} /></div><strong>没有找到正文匹配项</strong><p>试试关键词、语义或混合检索，或缩小当前资料范围。</p></div> : searchHits.map((hit) => {
+            {searchHits !== null ? searchBusy ? <div className="table-placeholder"><LoaderCircle className="spin" size={20} />正在检索正文</div> : searchHits.length === 0 ? <div className="empty-library"><div className="empty-icon"><Search size={22} /></div><strong>没有找到正文匹配项</strong><p>试试关键词、语义或混合检索，或缩小当前资料范围。</p><button className="empty-clear-button" onClick={clearListFilters}>清除筛选，查看全部文件</button></div> : searchHits.map((hit) => {
                 const source = hit.locator.source ?? {};
                 const location = source.page ? `第 ${source.page} 页` : source.paragraph ? `第 ${source.paragraph} 段` : source.slide ? `第 ${source.slide} 张幻灯片` : source.line ? `第 ${source.line} 行` : "文档片段";
                 return <button className="search-hit-row" key={hit.chunk_id} onClick={() => setSelectedId(hit.document_id)}><span className="search-hit-title"><strong>{hit.title}</strong><small>{location}</small></span><span className="search-hit-snippet">{hit.snippet}</span><ChevronRight size={16} /></button>;
               }) : loading ? <div className="table-placeholder"><LoaderCircle className="spin" size={20} />正在加载资料</div>
-              : documents.length === 0 ? <div className="empty-library"><div className="empty-icon"><Folder size={24} /></div><strong>{search ? "没有找到匹配文件" : stateFilter === "trashed" ? "回收站是空的" : "这里还没有资料"}</strong><p>{search ? "试试其他关键词，或清除当前筛选。" : stateFilter === "trashed" ? "删除的文件会显示在这里。" : "拖入文件，或点击下方按钮开始建立你的资料库。"}</p>{stateFilter === "active" && !search && <><button className="primary-button" onClick={() => fileInput.current?.click()}><Upload size={16} />选择文件上传</button><small className="empty-hint">支持 PDF、Word、PowerPoint、TXT、Markdown 和图片，单个文件最大 50 MiB。</small></>}</div>
+              : documents.length === 0 ? <div className="empty-library"><div className="empty-icon"><Folder size={24} /></div><strong>{search ? "没有找到匹配文件" : stateFilter === "trashed" ? "回收站是空的" : "这里还没有资料"}</strong><p>{search ? "试试其他关键词，或清除当前筛选。" : stateFilter === "trashed" ? "删除的文件会显示在这里。" : "拖入文件，或点击下方按钮开始建立你的资料库。"}</p>{(search || folderFilter || tagFilter || favoriteFilter) && <button className="empty-clear-button" onClick={clearListFilters}>清除筛选，查看全部文件</button>}{stateFilter === "active" && !search && <><button className="primary-button" onClick={() => fileInput.current?.click()}><Upload size={16} />选择文件上传</button><small className="empty-hint">支持 PDF、Word、PowerPoint、TXT、Markdown 和图片，单个文件最大 50 MiB。</small></>}</div>
               : documents.map((document) => {
                 const rowTags = tags.filter((tag) => document.tag_ids.includes(tag.id));
                 return <div className={`document-row ${selectedId === document.id ? "is-selected" : ""}`} key={document.id}>
