@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     registration_max_users: int = 20
     storage_root: Path = Path("./data/files")
     model_cache_dir: Path = Path("./data/models")
+    preview_root: Path = Path("./data/previews")
+    ppt_render_enabled: bool = True
 
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_api_key: SecretStr | None = None

@@ -16,6 +16,7 @@ services:
       - --loglevel=INFO
 
   worker-ingestion:
+    mem_limit: 1500m
     command:
       - /app/.venv/bin/celery
       - -A

@@ -28,6 +28,7 @@ from filemind.models import (
     User,
 )
 from filemind.parsing import PIPELINE_VERSION, ParseFailure, extract_document
+from filemind.presentation_render import render_presentation, rendered_pdf_path
 from filemind.storage import blob_path
 
 logger = logging.getLogger("filemind.worker")
@@ -154,6 +155,7 @@ def _purge_document(engine: Engine, claimed: ClaimedTask) -> None:
         raise RuntimeError("waiting for cited agent runs to stop before purging source")
     storage_root = get_settings().storage_root
     staged_paths: list[tuple[Path, Path]] = []
+    preview_paths: list[Path] = []
     try:
         with Session(engine) as session, session.begin():
             now = datetime.now(UTC)
@@ -207,6 +209,10 @@ def _purge_document(engine: Engine, claimed: ClaimedTask) -> None:
                     )
                 )
             )
+            preview_paths = [
+                rendered_pdf_path(get_settings().preview_root, claimed.owner_id, version.id)
+                for version in versions
+            ]
             blob_ids = {version.blob_id for version in versions}
             blobs_to_remove: list[Blob] = []
             for blob_id in blob_ids:
@@ -270,6 +276,11 @@ def _purge_document(engine: Engine, claimed: ClaimedTask) -> None:
             staged.unlink(missing_ok=True)
         except OSError:
             logger.warning("purged blob remains in staging task_id=%s", claimed.id)
+    for preview in preview_paths:
+        try:
+            preview.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("purged preview remains task_id=%s", claimed.id)
 
 
 def _finish_generic(engine: Engine, claimed: ClaimedTask) -> None:
@@ -369,6 +380,11 @@ def _parse_document(engine: Engine, claimed: ClaimedTask) -> None:
     # A first checkpoint both validates the lease and exposes a useful stage before parsing.
     update_stage("extracting", 0, None)
     blocks, page_count = extract_document(source, suffix, settings.max_pdf_pages, update_stage)
+    if suffix == ".pptx" and settings.ppt_render_enabled:
+        update_stage("rendering", 0, page_count)
+        render_presentation(
+            source, settings.preview_root, claimed.owner_id, claimed.version_id, page_count
+        )
     update_stage("indexing", 0, None)
     extracted_rows = [
         ExtractedBlock(

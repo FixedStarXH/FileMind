@@ -5,7 +5,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import false, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
@@ -14,6 +14,7 @@ from filemind.auth import Auth, WriteAuth
 from filemind.config import get_settings
 from filemind.database import get_db
 from filemind.models import BackgroundTask, Blob, Document, DocumentVersion, ExtractedBlock
+from filemind.presentation_render import rendered_pdf_path
 from filemind.slide_preview import slide_image_png, slide_layout
 from filemind.storage import blob_path
 from filemind.task_contracts import enqueue_task, task_payload
@@ -140,12 +141,16 @@ async def preview_version(
         if blob.mime in {"text/plain", "text/markdown"}
         else "unknown"
     )
+    rendered_available = (
+        kind == "pptx"
+        and rendered_pdf_path(get_settings().preview_root, auth[0].id, version.id).is_file()
+    )
     low_confidence = any(
         block.ocr_confidence is not None and block.ocr_confidence < 0.55 for block in blocks
     )
     slide: dict[str, object] | None = None
     slide_warning = False
-    if kind == "pptx" and page is not None and offset == 0:
+    if kind == "pptx" and not rendered_available and page is not None and offset == 0:
         path = blob_path(get_settings().storage_root, auth[0].id, blob.storage_key)
         if path.is_file():
             try:
@@ -157,6 +162,7 @@ async def preview_version(
     return {
         "data": {
             "kind": kind,
+            "rendered_available": rendered_available,
             "parse_state": version.parse_state,
             "error_code": version.error_code,
             "page_count": version.page_count,
@@ -181,6 +187,27 @@ async def preview_version(
         },
         "request_id": request.state.request_id,
     }
+
+
+@router.get("/versions/{version_id}/rendered.pdf")
+async def rendered_presentation(
+    version_id: UUID,
+    auth: Auth,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> FileResponse:
+    _version, blob, _document = await _owned_version(db, auth[0].id, version_id)
+    if not blob.mime.endswith("presentationml.presentation"):
+        raise HTTPException(415, "INLINE_PREVIEW_UNSUPPORTED")
+    path = rendered_pdf_path(get_settings().preview_root, auth[0].id, version_id)
+    if not path.is_file():
+        raise HTTPException(404, "RENDERED_PREVIEW_UNAVAILABLE")
+    return FileResponse(
+        path,
+        media_type="application/pdf",
+        filename="presentation.pdf",
+        content_disposition_type="inline",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.get("/versions/{version_id}/slides/{slide_number}/images/{shape_id}")

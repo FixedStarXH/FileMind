@@ -7,7 +7,7 @@
 | 前端 | React + TypeScript + Vite | 单页工具应用，无 SEO/服务端渲染需求；由 Nginx 同源提供 |
 | UI | Tailwind CSS + shadcn/ui + Lucide | 构建文件列表、对话框、命令菜单；保留自定义视觉能力 |
 | 前端数据 | React Router + TanStack Query；局部 React state | 服务端状态与页面状态分开；首版不另加全局状态库 |
-| 预览 | PDF.js、图片、清洗后的 Markdown/结构化文本 | 支持页码与片段定位；Office 不做在线编辑 |
+| 预览 | PDF.js、图片、清洗后的 Markdown/结构化文本；仅解析 worker 安装 LibreOffice Impress | PDF 和 PPTX 按整页预览并适配窗口；Office 不做在线编辑 |
 | Python | Python 3.12 + uv | 兼顾解析/推理依赖兼容性；提交 uv.lock |
 | API | FastAPI + Pydantic v2 | 类型校验、OpenAPI、流式事件接口 |
 | 数据访问 | SQLAlchemy 2.x + Alembic + psycopg 3 | API 异步会话，worker 同步事务；每个任务独立会话 |
@@ -16,7 +16,7 @@
 | Agent | LangGraph + PostgreSQL checkpointer | 可暂停审批、可恢复状态图；单 Agent 工具循环 |
 | LLM | DeepSeek Chat API，经独立 httpx 适配层 | Key 为空，模型名配置化；工具参数本地校验 |
 | OCR | `rapidocr` 3.10 + ONNX Runtime CPU | 本地识别；锁文件固定依赖，默认模型随 RapidOCR wheel 安装，不在首次用户请求时联网下载 |
-| 文本提取 | pypdf、pypdfium2、python-docx、python-pptx | PDF 文本与渲染分开，避免引入完整 Office 服务 |
+| 文本提取 | pypdf、pypdfium2、python-docx、python-pptx | 文本提取与页面渲染分离；LibreOffice 只生成 PPTX 预览副本，不参与检索 |
 | 向量 | BAAI/bge-small-zh-v1.5 + FastEmbed/ONNX Runtime | 中文优先、512 维、CPU 可运行；模型仓库与 commit 固定；英文质量另外验证 |
 | 关键词 | jieba + PostgreSQL tsvector/GIN | 文档与查询同样分词后使用 simple 配置；支持中文全文召回 |
 | 文件存储 | 本地持久卷 + Storage 接口 | 单机部署简单；未来可替换 S3 兼容存储，首版不引入 MinIO |

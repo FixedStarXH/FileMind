@@ -1,6 +1,6 @@
 # 阿里云 ECS 轻量演示部署
 
-适用环境：Alibaba Cloud Linux 3、2 vCPU、2 GiB 内存、40 GiB 系统盘。该配置用于少量合成文件和少量并发访问，功能包括注册/登录、上传、解析、文件预览、关键词正文检索、文件夹/标签、回收站和手动导出。演示环境设置 `EMBEDDINGS_ENABLED=false`，不加载 BGE 向量模型；DeepSeek Key 留空，因此 AI 问答、智能整理和语义检索不可演示。PPTX 内嵌图片预览可用，但大文件 OCR 和批量上传可能受内存限制。
+适用环境：Alibaba Cloud Linux 3、2 vCPU、2 GiB 内存、40 GiB 系统盘。该配置仅适合少量合成文件和单人演示；LibreOffice PPTX 渲染 worker 限制为 1.5 GiB，转换大型 PPT 时可能与同机服务争用内存。部署前应确认余量，并避免在共享低内存服务器上同时处理大文件。演示环境设置 `EMBEDDINGS_ENABLED=false`，不加载 BGE 向量模型；DeepSeek Key 留空，因此 AI 问答、智能整理和语义检索不可演示。
 
 ## 1. 先检查服务器
 

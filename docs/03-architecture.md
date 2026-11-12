@@ -29,7 +29,7 @@ flowchart LR
 1. 校验账户与容量 → 流式写临时文件、限制大小并计算 SHA-256。M2 锁定用户额度行并在元数据事务中记账；M3 异步任务再使用额度预留。
 2. 检查魔数、MIME、容器结构；将 blob 原子改名到随机存储键；事务创建 document/version。M2 同步写入且标记 `not_started`；M3 起再在同一事务创建 task/outbox。事务失败会回滚元数据、恢复/移除文件；孤儿文件由清理器回收。
 3. 上传事务同时创建 task/outbox；dispatcher 发布 task_id 到 Celery，数据库 outbox 记录投递；发布和标记不是原子操作，允许重复消息。M3 parse task 暂停在 `waiting_parser`，M4 启用 ingestion Worker 后再发布。
-4. M4 ingestion worker CAS 领取任务租约 → 提取 PDF、Office、文本或图片内容 → 对扫描 PDF/图片运行本地 OCR → 写入带 locator 的 extracted_blocks。任务与版本状态记录提取/OCR 阶段；取消与提交前检查租约及 fencing token。
+4. M4 ingestion worker CAS 领取任务租约 → 提取 PDF、Office、文本或图片内容 → 对扫描 PDF/图片运行本地 OCR → 写入带 locator 的 extracted_blocks。PPTX 同时由 ingestion worker 调用本地 LibreOffice 导出 PDF 预览副本，写入独立的 `filemind_previews` 卷；API 只读访问，永久删除时清理副本。任务与版本状态记录提取/OCR/渲染阶段；取消与提交前检查租约及 fencing token。
 5. M5 在解析任务的 indexing 阶段从 extracted_blocks 生成有界 chunks、jieba 中文关键词文本和 BGE 向量；固定模型资产缓存于模型卷。写入同一 extraction generation，最终事务激活 version 的 active_generation/index_mode，并且只在该版本仍是 latest_version 时切换 document.current_version。重建版本索引不打断此前已激活的 generation。模型资产暂不可用时可原子激活完整关键词索引并标记 keyword_only，混合检索明确降级；事务失败则保留旧 generation，不展示半套索引。
 6. 保存任务终态和事件；API 从数据库提供进度，浏览器以 SSE 跟进。
 

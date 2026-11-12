@@ -19,6 +19,7 @@ type PreviewBlock = {
 };
 type PreviewData = {
   kind: "pdf" | "image" | "docx" | "pptx" | "text" | "unknown";
+  rendered_available?: boolean;
   parse_state: string;
   error_code: string | null;
   page_count: number | null;
@@ -73,9 +74,14 @@ export default function DocumentPreview({
   const [error, setError] = useState("");
   const [visualError, setVisualError] = useState("");
   const [pdf, setPdf] = useState<pdfjs.PDFDocumentProxy | null>(null);
-  const [scale, setScale] = useState(1.15);
+  const [scale, setScale] = useState(1);
+  const [renderScale, setRenderScale] = useState(1);
+  const [fitMode, setFitMode] = useState<"page" | "width" | "custom">("page");
+  const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
+  const [textVisible, setTextVisible] = useState(true);
   const [selectedBlock, setSelectedBlock] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const pageAreaRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
   const requestId = useRef(0);
@@ -115,6 +121,9 @@ export default function DocumentPreview({
     setError("");
     setVisualError("");
     setData(null);
+    setPdf(null);
+    setFitMode("page");
+    setTextVisible(true);
     setPage(1);
     setPageDraft("1");
     setSelectedBlock(null);
@@ -150,15 +159,26 @@ export default function DocumentPreview({
 
   useEffect(() => {
     let active = true;
-    if (data?.kind !== "pdf") return;
-    const loadingTask = pdfjs.getDocument({ url: contentUrl, withCredentials: true });
+    if (data?.kind !== "pdf" && !(data?.kind === "pptx" && data.rendered_available)) return;
+    const url = data.kind === "pptx" ? `/api/v1/versions/${versionId}/rendered.pdf` : contentUrl;
+    const loadingTask = pdfjs.getDocument({ url, withCredentials: true });
     void loadingTask.promise
       .then((document) => {
         if (active) setPdf(document);
       })
-      .catch(() => { if (active) setVisualError("PDF 原页暂时无法显示，右侧仍可阅读已提取的文字。"); });
+      .catch(() => { if (active) setVisualError("原页暂时无法显示，仍可下载原件或阅读提取的文字。"); });
     return () => { active = false; void loadingTask.destroy(); };
-  }, [contentUrl, data?.kind]);
+  }, [contentUrl, data?.kind, data?.rendered_available, versionId]);
+
+  useEffect(() => {
+    const area = pageAreaRef.current;
+    if (!area) return;
+    const measure = () => setStageSize({ width: area.clientWidth, height: area.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(area);
+    return () => observer.disconnect();
+  }, [data?.kind, data?.rendered_available, textVisible]);
 
   useEffect(() => {
     if (!pdf || !canvasRef.current) return;
@@ -166,24 +186,32 @@ export default function DocumentPreview({
     let renderTask: pdfjs.RenderTask | null = null;
     void pdf.getPage(page).then(async (pdfPage) => {
       if (!active || !canvasRef.current) return;
-      const viewport = pdfPage.getViewport({ scale });
+      const base = pdfPage.getViewport({ scale: 1 });
+      const availableWidth = Math.max(240, stageSize.width - 48);
+      const availableHeight = Math.max(240, stageSize.height - 48);
+      const nextScale = fitMode === "custom" ? scale : fitMode === "width"
+        ? availableWidth / base.width
+        : Math.min(availableWidth / base.width, availableHeight / base.height);
+      const viewport = pdfPage.getViewport({ scale: nextScale });
       const canvas = canvasRef.current;
       const context = canvas.getContext("2d");
       if (!context) return;
-      canvas.width = Math.ceil(viewport.width);
-      canvas.height = Math.ceil(viewport.height);
+      const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.ceil(viewport.width * pixelRatio);
+      canvas.height = Math.ceil(viewport.height * pixelRatio);
       canvas.style.width = `${viewport.width}px`;
       canvas.style.height = `${viewport.height}px`;
-      renderTask = pdfPage.render({ canvas, canvasContext: context, viewport });
+      setRenderScale(nextScale);
+      renderTask = pdfPage.render({ canvas, canvasContext: context, viewport, transform: [pixelRatio, 0, 0, pixelRatio, 0, 0] });
       await renderTask.promise;
       if (active) setVisualError("");
     }).catch((cause: unknown) => {
       if (active && !(cause instanceof Error && cause.name === "RenderingCancelledException")) {
-        setVisualError("PDF 页面渲染失败，右侧仍可阅读已提取的文字。");
+        setVisualError("页面渲染失败，仍可下载原件或阅读提取的文字。");
       }
     });
     return () => { active = false; renderTask?.cancel(); };
-  }, [pdf, page, scale]);
+  }, [pdf, page, scale, fitMode, stageSize.width, stageSize.height]);
 
   async function changePage(next: number) {
     if (!data || pageLoading || next === page || next < 1 || next > Math.max(1, data.page_count ?? 1)) return;
@@ -240,7 +268,8 @@ export default function DocumentPreview({
 
   const overlays = useMemo(() => data?.blocks.filter((block) => Array.isArray(block.locator.bbox)) ?? [], [data]);
   const pageLimit = Math.max(1, data?.page_count ?? pdf?.numPages ?? 1);
-  const visual = data?.kind === "pdf" || data?.kind === "image";
+  const renderedSlides = data?.kind === "pptx" && data.rendered_available;
+  const visual = data?.kind === "pdf" || data?.kind === "image" || renderedSlides;
   const emptyText = data?.parse_state === "ready"
     ? visual ? "原件可以浏览，当前没有提取到文字。" : "这个文件没有可显示的文字。"
     : "解析完成后将在这里显示文字。";
@@ -268,14 +297,19 @@ export default function DocumentPreview({
             {data.warnings.includes("OCR_LOW_CONFIDENCE") && <div className="preview-warning"><AlertTriangle size={16} />部分文字识别置信度较低，请对照原图核验。</div>}
             {data.warnings.includes("SLIDE_MEDIA_UNAVAILABLE") && <div className="preview-warning"><AlertTriangle size={16} />幻灯片图片暂时无法读取，可下载原件查看。</div>}
             {data.parse_state !== "ready" && <div className="preview-warning">{data.error_code ? `解析失败：${data.error_code}。` : `当前状态：${data.parse_state}。`}仍可查看原件或下载，文字将在解析完成后出现。</div>}
-            <div className={`preview-body ${visual ? "has-visual" : "is-textual"}`}>
-              {data.kind === "pdf" && <div className="pdf-stage">
-                <div className="pdf-controls">{pageControls}<div className="preview-zoom"><button type="button" className="zoom-button" disabled={scale <= 0.65} onClick={() => setScale((value) => Math.max(0.65, Number((value - 0.15).toFixed(2))))} aria-label="缩小 PDF">−</button><span>{Math.round(scale * 100)}%</span><button type="button" className="zoom-button" disabled={scale >= 2} onClick={() => setScale((value) => Math.min(2, Number((value + 0.15).toFixed(2))))} aria-label="放大 PDF">+</button></div></div>
+            <div className={`preview-body ${visual ? "has-visual" : "is-textual"} ${visual && !textVisible ? "text-hidden" : ""}`}>
+              {(data.kind === "pdf" || renderedSlides) && <div className={`pdf-stage ${renderedSlides ? "slide-stage" : ""}`}>
+                <div className="pdf-controls">{pageControls}<div className="preview-view-actions">
+                  <button type="button" className={fitMode === "page" ? "view-action is-active" : "view-action"} onClick={() => setFitMode("page")}>适合页面</button>
+                  <button type="button" className={fitMode === "width" ? "view-action is-active" : "view-action"} onClick={() => setFitMode("width")}>适合宽度</button>
+                  <div className="preview-zoom"><button type="button" className="zoom-button" onClick={() => { setScale(Math.max(0.5, Number(((fitMode === "custom" ? scale : renderScale) - 0.15).toFixed(2)))); setFitMode("custom"); }} aria-label="缩小页面">−</button><span>{Math.round(renderScale * 100)}%</span><button type="button" className="zoom-button" onClick={() => { setScale(Math.min(3, Number(((fitMode === "custom" ? scale : renderScale) + 0.15).toFixed(2)))); setFitMode("custom"); }} aria-label="放大页面">+</button></div>
+                  <button type="button" className="view-action" onClick={() => setTextVisible((value) => !value)} aria-pressed={textVisible}>{textVisible ? "隐藏文字" : "显示文字"}</button>
+                </div></div>
                 {visualError && <div className="preview-visual-error" role="status">{visualError}</div>}
-                <div className="pdf-page-wrap"><div className="pdf-page"><canvas ref={canvasRef} aria-label={`PDF 第 ${page} 页`} role="img" />{!pageLoading && overlays.map((block) => {
+                <div ref={pageAreaRef} className="pdf-scroll-area"><div className="pdf-page-wrap"><div className="pdf-page"><canvas ref={canvasRef} aria-label={renderedSlides ? `第 ${page} 张幻灯片` : `PDF 第 ${page} 页`} role="img" />{data.kind === "pdf" && !pageLoading && overlays.map((block) => {
                   const box = block.locator.bbox as number[];
-                  return <button type="button" key={block.id} className={`ocr-overlay ${selectedBlock === block.id ? "is-selected" : ""}`} style={{ left: Number(box[0]) * scale, top: Number(box[1]) * scale, width: (Number(box[2]) - Number(box[0])) * scale, height: (Number(box[3]) - Number(box[1])) * scale }} title={block.text} onClick={() => selectBlock(block.id)} aria-label={`定位识别文字：${block.text}`} />;
-                })}</div></div>
+                  return <button type="button" key={block.id} className={`ocr-overlay ${selectedBlock === block.id ? "is-selected" : ""}`} style={{ left: Number(box[0]) * renderScale, top: Number(box[1]) * renderScale, width: (Number(box[2]) - Number(box[0])) * renderScale, height: (Number(box[3]) - Number(box[1])) * renderScale }} title={block.text} onClick={() => selectBlock(block.id)} aria-label={`定位识别文字：${block.text}`} />;
+                })}</div></div></div>
               </div>}
               {data.kind === "image" && <div className="image-stage">
                 {visualError && <div className="preview-visual-error" role="status">{visualError}</div>}
@@ -286,7 +320,7 @@ export default function DocumentPreview({
                   return <button type="button" key={block.id} className={`ocr-overlay ${selectedBlock === block.id ? "is-selected" : ""}`} style={{ left: `${Number(box[0]) / width * 100}%`, top: `${Number(box[1]) / height * 100}%`, width: `${(Number(box[2]) - Number(box[0])) / width * 100}%`, height: `${(Number(box[3]) - Number(box[1])) / height * 100}%` }} title={block.text} onClick={() => selectBlock(block.id)} aria-label={`定位识别文字：${block.text}`} />;
                 })}</div>
               </div>}
-              {visual && <aside className="preview-block-list" aria-label="提取的文字">
+              {visual && (textVisible || data.kind === "image") && <aside className="preview-block-list" aria-label="提取的文字">
                 <div className="preview-list-heading"><strong>{data.kind === "image" ? "识别文字" : "本页文字"}</strong><span>{data.blocks.length} 条</span></div>
                 {pageLoading ? <div className="preview-loading"><LoaderCircle className="spin" size={18} />正在读取本页文字</div> : data.blocks.length ? data.blocks.map((block) => <button type="button" id={`preview-block-${block.id}`} key={block.id} className={`preview-block ${selectedBlock === block.id ? "is-selected" : ""}`} onClick={() => selectBlock(block.id)}><span>{locatorLabel(block)}{block.ocr_confidence !== null && <small> · OCR {Math.round(block.ocr_confidence * 100)}%</small>}</span><p>{block.text}</p></button>) : <div className="preview-empty">{emptyText}</div>}
                 {moreButton}

@@ -12,6 +12,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       STORAGE_ROOT: /data/files
       MODEL_CACHE_DIR: /data/models
+      PREVIEW_ROOT: /data/previews
       APP_ORIGIN: ${APP_ORIGIN:-http://127.0.0.1:5173}
       ENABLE_INGESTION_WORKER: ${ENABLE_INGESTION_WORKER:-false}
     ports:
@@ -19,6 +20,7 @@ services:
     volumes:
       - filemind_files:/data/files
       - filemind_models:/data/models:ro
+      - filemind_previews:/data/previews:ro
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -88,6 +90,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       STORAGE_ROOT: /data/files
       MODEL_CACHE_DIR: /data/models
+      PREVIEW_ROOT: /data/previews
     command:
       - /app/.venv/bin/celery
       - -A
@@ -98,6 +101,7 @@ services:
       - --loglevel=INFO
     volumes:
       - filemind_files:/data/files
+      - filemind_previews:/data/previews
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -115,7 +119,9 @@ services:
     restart: unless-stopped
 
   worker-ingestion:
-    build: .
+    build:
+      context: .
+      target: ingestion
     env_file:
       - .env
     environment:
@@ -123,6 +129,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       STORAGE_ROOT: /data/files
       MODEL_CACHE_DIR: /data/models
+      PREVIEW_ROOT: /data/previews
       HF_HOME: /data/models/hf-home
       HF_HUB_CACHE: /data/models/huggingface
       HF_XET_CACHE: /data/models/hf-xet
@@ -138,6 +145,7 @@ services:
     volumes:
       - filemind_files:/data/files:ro
       - filemind_models:/data/models
+      - filemind_previews:/data/previews
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -267,3 +275,4 @@ volumes:
   filemind_redis:
   filemind_files:
   filemind_models:
+  filemind_previews:
