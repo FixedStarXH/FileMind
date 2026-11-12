@@ -92,6 +92,7 @@ class QAState(TypedDict, total=False):
     citations: list[Evidence]
     usage: dict[str, int]
     no_evidence: bool
+    small_talk_answer: str
 
 
 class AgentFailure(Exception):
@@ -380,6 +381,8 @@ def _call_deepseek(
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code in (401, 403):
             raise AgentFailure("MODEL_AUTH_FAILED") from None
+        if exc.response.status_code == 402:
+            raise AgentFailure("MODEL_BILLING_REQUIRED") from None
         if 400 <= exc.response.status_code < 500 and exc.response.status_code != 429:
             raise AgentFailure("MODEL_REQUEST_REJECTED") from None
         raise RuntimeError("DeepSeek temporarily unavailable") from None
@@ -453,6 +456,42 @@ def _build_graph(engine: Engine) -> StateGraph[QAState]:
     def retrieve_node(state: QAState) -> dict[str, object]:
         started = perf_counter()
         owner_id = UUID(state["owner_id"])
+        normalized = "".join(
+            character for character in state["instruction"].casefold() if character.isalnum()
+        )
+        greetings = {
+            "你好": "你好！可以选择资料范围后，问我课件、论文和求职资料里的具体问题。",
+            "您好": "您好！选择资料范围后，告诉我想查找或理解什么内容，我会附上资料出处。",
+            "嗨": "嗨！可以问我资料里的知识点、项目经历或证书信息，我会标出来源。",
+            "哈喽": "哈喽！选择资料范围后，问我一个关于资料的具体问题吧。",
+            "hello": "你好！选择资料范围后，告诉我想查找或理解什么内容，我会附上资料出处。",
+            "hi": "你好！可以选择资料范围，再问我课件、论文或求职资料里的问题。",
+            "在吗": "我在。选择资料范围后，告诉我想查找或理解什么内容。",
+            "早上好": "早上好！今天想从哪份资料开始？选择范围后就可以提问。",
+            "下午好": "下午好！选择资料范围后，告诉我想查找或理解什么内容。",
+            "晚上好": "晚上好！选择资料范围后，问我资料里的具体问题吧。",
+        }
+        small_talk = greetings.get(normalized) if len(normalized) <= 12 else None
+        if small_talk:
+            _write_graph_step(
+                engine,
+                UUID(state["run_id"]),
+                owner_id,
+                key="retrieval.completed",
+                stage="search",
+                message="已收到问候，直接回复",
+                tool_name="search_documents",
+                safe_input={"query_length": len(state["instruction"]), "scope": state["scope"]},
+                safe_output={"candidate_count": 0, "small_talk": True},
+                started=started,
+            )
+            return {
+                "evidence": [],
+                "degraded": False,
+                "retrieval_version": 0,
+                "no_evidence": False,
+                "small_talk_answer": small_talk,
+            }
         history = _conversation_context(engine, UUID(state["run_id"]), owner_id)
         prior_questions = [item["content"] for item in history if item["role"] == "user"][-2:]
         search_question = "\n".join([*prior_questions, state["instruction"]])[-2000:]
@@ -480,9 +519,23 @@ def _build_graph(engine: Engine) -> StateGraph[QAState]:
         }
 
     def answer_node(state: QAState) -> dict[str, object]:
+        if state.get("small_talk_answer"):
+            return {
+                "answer": state["small_talk_answer"],
+                "citations": [],
+                "usage": {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "llm_calls": 0,
+                },
+            }
         if state.get("no_evidence"):
             return {
-                "answer": "当前资料范围内没有找到可引用的内容，暂时无法根据资料回答这个问题。",
+                "answer": (
+                    "在当前选择的资料范围里没有找到可引用内容。"
+                    "可以上传相关资料、等待解析完成，或换一个包含相关文件的范围后再试。"
+                ),
                 "citations": [],
                 "usage": {
                     "prompt_tokens": 0,
@@ -497,7 +550,10 @@ def _build_graph(engine: Engine) -> StateGraph[QAState]:
         evidence_by_id = {item["id"]: item for item in state["evidence"]}
         cited = [evidence_by_id[item] for item in cited_ids]
         if not answer and not cited:
-            answer = "现有资料不足以支持一个有引用的回答。"
+            answer = (
+                "我在当前资料中找到了相关内容，但还不足以组织成有出处的答案。"
+                "试着缩小问题范围，或补充相关资料后再问。"
+            )
         _write_graph_step(
             engine,
             UUID(state["run_id"]),

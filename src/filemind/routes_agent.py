@@ -269,7 +269,7 @@ async def create_run(
         budget={"llm_calls": 0, "tool_calls": 0, "max_llm_calls": config.run_max_llm_calls},
         model=config.deepseek_model,
         prompt_version=(
-            "filemind-qa-1"
+            "filemind-qa-2"
             if body.mode == "qa"
             else "filemind-application-pack-1"
             if body.mode == "application_pack"

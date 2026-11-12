@@ -20,6 +20,7 @@
 | M12（已完成） | 多格式文档预览阅读体验 | M11 | Edge 实际预览 PDF、DOCX、PPTX、TXT、PNG、JPEG 及手机视口；长文本加载后续内容；验证记录见 `docs/27-preview-validation.md`；`feat: improve multi-format document preview` |
 | M13（已完成） | PPTX 幻灯片内嵌图片预览 | M12 | 图片/文字位置、双页图片、私有图片访问和 Edge 页面验收；验证记录见 `docs/28-pptx-media-validation.md`；`feat: preview embedded slide images` |
 | M14（已完成） | PDF 与 PPTX 整页预览、适配视口和缩放 | M13 | PDF/PPTX Edge 桌面及手机视口；《太原红色记忆》第 1、2、13 页完整渲染；验证记录见 `docs/30-full-page-preview-validation.md`；`feat: render full page document previews` |
+| M15（已完成） | AI 问答寒暄处理、资料不足引导与模型错误说明 | M14 | 寒暄不调用模型；无证据时提示下一步；DeepSeek 402 返回账户额度说明；`feat: improve assistant question answering UX` |
 
 前端随M1–M8逐模块交付，不把所有页面拖到最后。M1做登录，M2做资料库，M3任务中心，M4预览，M5搜索，M6对话，M7审批，M8资料包。
 
