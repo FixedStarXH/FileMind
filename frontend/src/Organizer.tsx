@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { ArrowLeft, Check, CheckCircle2, Clock3, FolderOpen, LoaderCircle, ShieldCheck, Sparkles, X } from "lucide-react";
-import { request } from "./api";
+import { newClientId, request } from "./api";
 import "./Organizer.css";
 
 type Folder = { id: string; name: string; parent_id: string | null };
@@ -128,7 +128,7 @@ export default function Organizer({
     try {
       const result = await request<{ status: string }>(`/agent/runs/${runId}/approval`, {
         method: "POST",
-        headers: { "X-CSRF-Token": csrf, "Idempotency-Key": crypto.randomUUID() },
+        headers: { "X-CSRF-Token": csrf, "Idempotency-Key": newClientId() },
         body: JSON.stringify({
           plan_id: plan.id, plan_hash: plan.plan_hash, decision,
           selected_action_ids: decision === "approve" ? selected : [],

@@ -4,7 +4,7 @@ import {
   FileText, Folder, FolderPlus, HardDrive, Heart, LoaderCircle, LogOut, MoreHorizontal,
   MessageSquareText, Plus, Search, Settings2, ShieldCheck, Star, Tag as TagIcon, Trash2, Upload, WandSparkles, X,
 } from "lucide-react";
-import { request, uploadFile } from "./api";
+import { newClientId, request, uploadFile } from "./api";
 const DocumentPreview = lazy(() => import("./DocumentPreview"));
 
 type User = { id: string; email: string };
@@ -312,7 +312,7 @@ export default function Library({
       return;
     }
     const selected = files.map((file) => ({
-      id: crypto.randomUUID(), file, status: "waiting" as const, progress: 0,
+      id: newClientId(), file, status: "waiting" as const, progress: 0,
     }));
     setUploads((current) => [...selected, ...current]);
     setError("");
@@ -454,7 +454,7 @@ export default function Library({
     try {
       await request(`/documents/${document.id}/permanent`, {
         method: "DELETE",
-        headers: { "X-CSRF-Token": csrf, "Idempotency-Key": crypto.randomUUID() },
+        headers: { "X-CSRF-Token": csrf, "Idempotency-Key": newClientId() },
         body: JSON.stringify({ confirm_title: confirmTitle }),
       });
       setDialog(null);

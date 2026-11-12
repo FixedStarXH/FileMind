@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { ArrowLeft, Archive, BriefcaseBusiness, Check, CheckCircle2, Download, FileText, LoaderCircle, PackageCheck, RefreshCw, ShieldCheck, Sparkles, X } from "lucide-react";
-import { request, type ApiError } from "./api";
+import { newClientId, request, type ApiError } from "./api";
 import "./ApplicationPacks.css";
 import "./ApplicationPacksSources.css";
 
@@ -129,7 +129,7 @@ export default function ApplicationPacks({ csrf, aiEnabled, hasDeepSeek, onLibra
     try {
       const result = await request<{ status: string }>(`/agent/runs/${runId}/approval`, {
         method: "POST",
-        headers: { "X-CSRF-Token": csrf, "Idempotency-Key": crypto.randomUUID() },
+        headers: { "X-CSRF-Token": csrf, "Idempotency-Key": newClientId() },
         body: JSON.stringify({ plan_id: plan.id, plan_hash: plan.plan_hash, decision, selected_action_ids: decision === "approve" ? selectedActions : [] }),
       });
       setRun((current) => current ? { ...current, status: result.data.status } : current);
@@ -144,7 +144,7 @@ export default function ApplicationPacks({ csrf, aiEnabled, hasDeepSeek, onLibra
     if (!versionIds.length) return;
     setBusy(true); setError(""); setNotice("");
     try {
-      await request("/exports", { method: "POST", headers: { "X-CSRF-Token": csrf, "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ version_ids: versionIds }) });
+      await request("/exports", { method: "POST", headers: { "X-CSRF-Token": csrf, "Idempotency-Key": newClientId() }, body: JSON.stringify({ version_ids: versionIds }) });
       setNotice("导出任务已创建，可在下方查看进度。"); setManualSelected([]); await loadExports();
     } catch (cause) { setError(explain(cause)); }
     finally { setBusy(false); }

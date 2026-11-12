@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ArrowLeft, ArrowUp, BookOpenText, Check, CircleAlert, FileText, LoaderCircle, MessageSquareText, Plus, Square, X } from "lucide-react";
-import { ApiError, request } from "./api";
+import { ApiError, newClientId, request } from "./api";
 import "./Assistant.css";
 
 type Settings = { ai_enabled: boolean; capabilities: { deepseek: boolean } };
@@ -218,7 +218,7 @@ export default function Assistant({
         headers: { "X-CSRF-Token": csrf },
         body: JSON.stringify({ mode: "qa", conversation_id: currentConversationId, instruction: prompt, scope: selectedScope }),
       });
-      setMessages((previous) => [...previous, { id: crypto.randomUUID(), role: "user", content: prompt, run_id: result.data.run_id, redacted: false }]);
+      setMessages((previous) => [...previous, { id: newClientId(), role: "user", content: prompt, run_id: result.data.run_id, redacted: false }]);
       setQuestion("");
       setActiveRunId(result.data.run_id);
       setProgress("问答任务已排队，正在准备资料证据…");

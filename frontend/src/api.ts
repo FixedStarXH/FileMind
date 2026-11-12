@@ -9,6 +9,16 @@ export class ApiError extends Error {
   }
 }
 
+// randomUUID is unavailable on plain HTTP origins; getRandomValues remains available.
+export function newClientId(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 export async function request<T>(path: string, init: RequestInit = {}): Promise<Envelope<T>> {
   const headers = new Headers(init.headers);
   if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
@@ -40,7 +50,7 @@ export function uploadFile<T>(
     xhr.open("POST", `/api/v1${path}`);
     xhr.withCredentials = true;
     xhr.setRequestHeader("X-CSRF-Token", csrf);
-    xhr.setRequestHeader("Idempotency-Key", crypto.randomUUID());
+    xhr.setRequestHeader("Idempotency-Key", newClientId());
     if (options.ifMatch !== undefined) xhr.setRequestHeader("If-Match", `"${options.ifMatch}"`);
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100));
